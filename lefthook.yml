@@ -1,0 +1,12 @@
+pre-commit:
+  commands:
+    gitleaks:
+      run: |
+        gitleaks detect --verbose --redact
+    check-changelog:
+      run: |
+        if ! git status | grep -E 'modified|new file' | grep changelog.md
+        then
+          echo "Update the changelog, fool."
+          exit 1
+        fi

@@ -1,0 +1,27 @@
+name: cut-release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - 'example/**'
+
+jobs:
+  cut-release:
+    name: Cut release
+    runs-on: macos-13
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get current version
+        run: |
+          echo version="$(./cart | /usr/bin/tail -1 | /usr/bin/awk '{print $2}')" >> $GITHUB_ENV
+
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: "cart"
+          bodyFile: "changelog.md"
+          tag: ${{ env.version }}
