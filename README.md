@@ -25,6 +25,12 @@ Cart expects an argument for a URL to a DMG file, for example:
 cart https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg
 ```
 
+Alternatively, a local filesystem path can be provided:
+
+```
+cart ~/Downloads/UTM.dmg
+```
+
 Optionally, provide a SHA256 sum for the downloaded DMG file:
 
 ```
@@ -39,6 +45,8 @@ To uninstall an application, simply remove it from your `~/Applications` folder:
 ls ~/Applications
 rm -rf ~/Applications/myapp.app
 ```
+
+If you run `cart` as root (i.e. via `sudo`), `cart` will install applications to `/Applications`.
 
 ## Planned features
 

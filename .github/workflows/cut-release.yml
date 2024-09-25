@@ -7,6 +7,7 @@ on:
       - 'main'
     paths-ignore:
       - 'example/**'
+      - '.github/**'
 
 jobs:
   cut-release:
@@ -16,12 +17,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Test Installation
+        run: |
+          ./cart https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
+
       - name: Get current version
         run: |
           echo version="$(./cart | /usr/bin/tail -1 | /usr/bin/awk '{print $2}')" >> $GITHUB_ENV
+          shasum -a 256 ./cart > cart.checksum
 
       - uses: ncipollo/release-action@v1
         with:
-          artifacts: "cart"
+          artifacts: "cart,cart.checksum,README.md"
           bodyFile: "changelog.md"
           tag: ${{ env.version }}

@@ -4,7 +4,7 @@ dmg_url="$1"
 hash="$2"
 
 # VERSION awareness
-version="0.0.1"
+version="0.0.2"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -14,23 +14,50 @@ PATH="/bin:/usr/bin:/sbin:/usr/sbin"
 downloads="/tmp/cart/downloads"
 mountpoints="/tmp/cart/mountpoints"
 
+# Use /Applications if root
+if [[ $(id -u) == 0 ]]
+then
+    echo "Running as root, installing to /Applications"
+    apps_folder="/Applications"
+else
+    echo "Running unprivileged, installing to ${HOME}/Applications"
+    apps_folder="${HOME}/Applications"
+    mkdir -p "${apps_folder}"
+fi
+
 # Only support MacOS
-# Allow printing usage on Linux for CI
 if ! uname | grep -qE '^Darwin'
 then
     echo "Did not detect MacOS. Exiting."
     exit 1
 fi
 
-# Usage if no argument provided
-[[ -z "${dmg_url}" ]] && printf "Usage: $0 \"https://github.com/<some-repo>/releases/download/<some-release>/<some-app>.dmg\" \"sha256-hash\"\nVersion: ${version}" && exit 0
+# Usage if something besides URL is provided
+domain_regex='(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]'
+local_file="false"
+if [[ ! ${dmg_url} =~ ${domain_regex} ]]
+then
+    # If argument is local file, try to use it
+    if [[ -e ${dmg_url} ]]
+    then
+        local_file="true"
+    else
+        printf "Usage: $0 \"https://github.com/<some-repo>/releases/download/<some-release>/<some-app>.dmg\" \"sha256-hash\"\nVersion: ${version}" && exit 0
+    fi
+fi
 
-mkdir -p "$HOME/Applications" "${mountpoints}" "${downloads}"
+mkdir -p "${mountpoints}" "${downloads}"
 
-# Download filename
-echo "Downloading ${dmg_url}..."
-filename="$(curl --progress-bar --output-dir "${downloads}" -OJsL "${dmg_url}" -w "%{filename_effective}")"
-echo "Output file: ${filename}"
+if [[ "${local_file}" == "true" ]]
+then
+    echo "Using local file ${dmg_url}"
+    filename="${dmg_url}"
+else
+    # Download filename
+    echo "Downloading ${dmg_url}..."
+    filename="$(curl --progress-bar --output-dir "${downloads}" -OJsL "${dmg_url}" -w "%{filename_effective}")"
+    echo "Output file: ${filename}"
+fi
 
 # If hash provided, ensure it matches
 if [[ -n "${hash}" ]]
@@ -61,12 +88,11 @@ if find "${mountpoints}/${basename}" -maxdepth 1 -name "*.app" &>/dev/null
 then
     appfilepath="$(find "${mountpoints}/${basename}" -maxdepth 1 -name "*.app")"
     appfile="$(basename ${appfilepath})"
-    target="$HOME/Applications/"
-    rsync -a --delete "${appfilepath}" "${target}"
+    rsync --progress -a --delete "${appfilepath}" "${apps_folder}"
 else
     echo "Unable to find .app in ${mountpoints}/${basename}."
 fi
 
 # Cleanup
 [[ -e "${mountpoints}/${basename}" ]] && echo "Unmounting ${mountpoints}/${basename}." && hdiutil detach "${mountpoints}/${basename}" > /dev/null
-[[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}"
+[[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}" || true
