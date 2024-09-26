@@ -8,6 +8,7 @@ on:
     paths-ignore:
       - 'example/**'
       - '.github/**'
+      - 'README.md'
 
 jobs:
   cut-release:
@@ -17,9 +18,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Test Installation
+      - name: Test functionality
         run: |
-          ./cart https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
+          # DMG test
+          ./cart add https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
+          ./cart list | grep -i UTM
+          # Fail if app doesn't exist
+          [[ -e /Users/runner/Applications/UTM.app ]] || exit 20
+          ./cart del UTM
+          # Fail if app does exist
+          [[ ! -e /Users/runner/Applications/UTM.app ]] || exit 21
+
+          # Zip test
+          ./cart add https://iterm2.com/downloads/stable/iTerm2-3_5_5.zip
+          ./cart list | grep -i iTerm
+          # Fail if app doesn't exist
+          [[ -e /Users/runner/Applications/iTerm.app ]] || exit 20
+          ./cart del iTerm
+          # Fail if app does exist
+          [[ ! -e /Users/runner/Applications/iTerm.app ]] || exit 21
 
       - name: Get current version
         run: |
@@ -28,6 +45,9 @@ jobs:
 
       - uses: ncipollo/release-action@v1
         with:
-          artifacts: "cart,cart.checksum,README.md"
+          artifacts: "cart,cart.checksum,docs/README.md,cart.config"
           bodyFile: "changelog.md"
           tag: ${{ env.version }}
+          makeLatest: true
+          replacesArtifacts: true
+          allowUpdates: true
