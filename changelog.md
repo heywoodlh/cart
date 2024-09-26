@@ -1,5 +1,12 @@
 ---
 
+## 0.0.3
+
+- Refactored sections into functions for better organization/modularity
+- Support config file
+- Subcommands: add, del, list
+- Nix flake package
+
 ## 0.0.2
 
 - Allow installing dmg's from local filesystem

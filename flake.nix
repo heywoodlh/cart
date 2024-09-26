@@ -14,16 +14,20 @@
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
       stable-pkgs = nixpkgs-stable.legacyPackages.${system};
-      cart = pkgs.writeShellScriptBin "cart" ''
+      cartpkg = pkgs.writeShellScriptBin "cart" ''
         ${self}/cart $@
       '';
     in {
+      packages = rec {
+        cart = cartpkg;
+        default = cart;
+      };
       devShell = pkgs.mkShell {
         name = "nixos-configs devShell";
         buildInputs = with pkgs; [
           lefthook
           stable-pkgs.gitleaks # bug in pkgs.gitleaks currently
-          cart
+          cartpkg
         ];
         shellHook = ''
           lefthook install

@@ -19,34 +19,7 @@ export PATH="$HOME/bin:$PATH"
 
 # Usage
 
-Cart expects an argument for a URL to a DMG file, for example:
-
-```
-cart https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg
-```
-
-Alternatively, a local filesystem path can be provided:
-
-```
-cart ~/Downloads/UTM.dmg
-```
-
-Optionally, provide a SHA256 sum for the downloaded DMG file:
-
-```
-cart https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
-```
-
-If you provide an invalid hash, `cart` will print the correct hash for the file.
-
-To uninstall an application, simply remove it from your `~/Applications` folder:
-
-```
-ls ~/Applications
-rm -rf ~/Applications/myapp.app
-```
-
-If you run `cart` as root (i.e. via `sudo`), `cart` will install applications to `/Applications`.
+For documentation on how to configure and use `cart` please refer to [the documentation](./docs/main.md)
 
 ## Planned features
 
@@ -74,4 +47,5 @@ If you run `cart` as root (i.e. via `sudo`), `cart` will install applications to
     - [ ] add
     - [ ] del
     - [ ] update
+  - [ ] repository verification (detect MITM -- i.e. something like GPG key verification?)
 - [ ] Nix-Darwin module

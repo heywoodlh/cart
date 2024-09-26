@@ -1,98 +1,309 @@
 #!/bin/zsh
-# Required arguments
-dmg_url="$1"
-hash="$2"
+
+set -e
 
 # VERSION awareness
-version="0.0.2"
+version="0.0.3"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
 PATH="/bin:/usr/bin:/sbin:/usr/sbin"
 
-# Directories for cart to work with
-downloads="/tmp/cart/downloads"
-mountpoints="/tmp/cart/mountpoints"
-
-# Use /Applications if root
-if [[ $(id -u) == 0 ]]
-then
-    echo "Running as root, installing to /Applications"
-    apps_folder="/Applications"
-else
-    echo "Running unprivileged, installing to ${HOME}/Applications"
-    apps_folder="${HOME}/Applications"
-    mkdir -p "${apps_folder}"
-fi
-
 # Only support MacOS
-if ! uname | grep -qE '^Darwin'
+if ! uname | grep -qE '^Darwin' &>/dev/null
 then
     echo "Did not detect MacOS. Exiting."
     exit 1
 fi
 
-# Usage if something besides URL is provided
-domain_regex='(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]'
+# Global variables, can be overridden in cart.config
+downloads="/tmp/cart/downloads"
+mountpoints="/tmp/cart/mountpoints"
+apps_folder="${HOME}/Applications"
+cart_dir="${HOME}/Library/Application Support/cart"
+
+# Other global variables, not managed with config
+archive_url=""
+file_type=""
+
+# Prep needed for actual package management (add, del)
+prep() {
+    # Prep phase
+    # Use /Applications if root
+    if [[ $(id -u) == 0 ]]
+    then
+        echo "Running as root, apps will be installed to /Applications"
+        apps_folder="/Applications"
+    else
+        echo "Running unprivileged, apps will be installed to ${HOME}/Applications"
+        mkdir -p "${apps_folder}"
+    fi
+    # Usage if something besides URL is provided
+    config_file=""
+    source_config() {
+        file="$1"
+        if [[ -z "${config_file}" ]]
+        then
+            [[ -e "${file}" ]] && echo "Config file discovered: ${file}" && source "${file}"
+        fi
+    }
+    # Create directories
+    mkdir -p "${mountpoints}" "${downloads}"
+    # Prioritized, stops on first discovery
+    source_config "./cart.config"
+    source_config "$HOME/Library/Application Support/cart/cart.config"
+    source_config "$HOME/.config/cart/cart.config"
+}
+
+filename=""
 local_file="false"
-if [[ ! ${dmg_url} =~ ${domain_regex} ]]
-then
-    # If argument is local file, try to use it
-    if [[ -e ${dmg_url} ]]
+download_file() {
+    [[ -e "${archive_url}" ]] && local_file="true"
+    if [[ "${local_file}" == "true" ]]
     then
-        local_file="true"
+        echo "Using local file ${archive_url}"
+        filename="${archive_url}"
     else
-        printf "Usage: $0 \"https://github.com/<some-repo>/releases/download/<some-release>/<some-app>.dmg\" \"sha256-hash\"\nVersion: ${version}" && exit 0
+        # Download filename
+        echo "Downloading ${archive_url}..."
+        filename="$(curl --progress-bar --output-dir "${downloads}" -OJsL "${archive_url}" -w "%{filename_effective}")"
+        echo "Output file: ${filename}"
     fi
-fi
+}
 
-mkdir -p "${mountpoints}" "${downloads}"
-
-if [[ "${local_file}" == "true" ]]
-then
-    echo "Using local file ${dmg_url}"
-    filename="${dmg_url}"
-else
-    # Download filename
-    echo "Downloading ${dmg_url}..."
-    filename="$(curl --progress-bar --output-dir "${downloads}" -OJsL "${dmg_url}" -w "%{filename_effective}")"
-    echo "Output file: ${filename}"
-fi
-
-# If hash provided, ensure it matches
-if [[ -n "${hash}" ]]
-then
+filehash=""
+check_hash() {
     filehash="$(shasum -a 256 ${filename} | awk '{print $1}')"
-    if [[ "${hash}" != "${filehash}" ]]
+    # If hash provided, ensure it matches
+    if [[ -n "${hash}" ]]
     then
-        printf "Incorrect file hash provided.\n${filename} hash: ${filehash}\nExiting." && exit 3
-    else
-        printf "File hash looks good.\n"
+        if [[ "${hash}" != "${filehash}" ]]
+        then
+            printf "Incorrect file hash provided.\n${filename} hash: ${filehash}\nExiting." && exit 3
+        else
+            printf "File hash looks good.\n"
+        fi
     fi
-fi
+}
 
-# Ensure that file is a dmg file before continuing
-if ! echo "Ensuring ${filename} integrity" && hdiutil verify "${filename}" > /dev/null
-then
-    echo "File ${filename} failed dmg integrity check. Cleaning up and Exiting."
-    rm -f "${filename}"
-    exit 2
-fi
+app_name=""
+app_dest=""
+install_app() {
+    app_path="$1"
+    # Install .app if found
+    if find "${app_path}" -maxdepth 1 -name "*.app" &>/dev/null
+    then
+        appfilepath="$(find "${app_path}" -maxdepth 1 -name "*.app")"
+        appfile="$(basename ${appfilepath})"
+        echo "Copying: ${appfilepath} => ${apps_folder}/${appfile}"
+        rsync -a --delete "${appfilepath}" "${apps_folder}"
+        app_name="${appfile%.*}"
+        app_dest="${apps_folder}/${appfile}"
+    else
+        echo "Unable to find .app in ${app_path}."
+        false
+    fi
+}
 
-# Mount dmg if it doesn't exist
-basename="$(basename "${filename}")"
-[[ -e "${mountpoints}/${basename}" ]] || echo "Mounting ${mountpoints}/${basename}." && hdiutil attach -mountpoint "${mountpoints}/${basename}" "${filename}" > /dev/null
+install_dmg() {
+    # Ensure that file is a valid dmg file
+    if ! echo "Ensuring ${filename} integrity" && hdiutil verify "${filename}" > /dev/null
+    then
+        echo "File ${filename} failed dmg integrity check. Cleaning up and Exiting."
+        rm -f "${filename}"
+        exit 2
+    fi
 
-# Install .app if found
-if find "${mountpoints}/${basename}" -maxdepth 1 -name "*.app" &>/dev/null
-then
-    appfilepath="$(find "${mountpoints}/${basename}" -maxdepth 1 -name "*.app")"
-    appfile="$(basename ${appfilepath})"
-    rsync --progress -a --delete "${appfilepath}" "${apps_folder}"
-else
-    echo "Unable to find .app in ${mountpoints}/${basename}."
-fi
+    # Mount dmg if it doesn't exist
+    basename="$(basename "${filename}")"
+    [[ -e "${mountpoints}/${basename}" ]] || echo "Mounting ${mountpoints}/${basename}." && hdiutil attach -mountpoint "${mountpoints}/${basename}" "${filename}" > /dev/null
 
-# Cleanup
-[[ -e "${mountpoints}/${basename}" ]] && echo "Unmounting ${mountpoints}/${basename}." && hdiutil detach "${mountpoints}/${basename}" > /dev/null
-[[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}" || true
+    install_app "${mountpoints}/${basename}"
+
+    # Cleanup
+    [[ -e "${mountpoints}/${basename}" ]] && echo "Unmounting ${mountpoints}/${basename}." && hdiutil detach "${mountpoints}/${basename}" > /dev/null
+    [[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}" || true
+}
+
+install_zip() {
+    basename="$(basename "${filename}")"
+    mkdir -p "${mountpoints}/${basename}"
+    unzip -d "${mountpoints}/${basename}/" "${filename}"
+    install_app "${mountpoints}/${basename}"
+    # Cleanup
+    [[ -e "${mountpoints}/${basename}" ]] && echo "Cleaning up ${mountpoints}/${basename}." && rm -rf "${mountpoints}/${basename}" > /dev/null
+    [[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}" || true
+}
+
+# Function to determine file type
+check_file() {
+    file="$1"
+    file_data="$(file -I "${file}")"
+    echo -n "${file_data}" | grep -q 'application/zlib' && file_type="dmg"
+    echo -n "${file_data}" | grep -q 'Zip archive' && file_type="zip"
+
+    if [[ -z "${file_type}" ]]
+    then
+        printf "Unsupported filetype for "${file}".\n Exiting."
+        exit 4
+    fi
+}
+
+# Save app name for use with other subcommands
+register_app() {
+    app_name="$1"
+    mkdir -p "${cart_dir}"
+
+    # Create applist.txt if it doesn't exit
+    [[ ! -e "${cart_dir}/applist.txt" ]] && touch "${cart_dir}/applist.txt"
+    # Remove entry from applist.txt if already exists
+    sed -i '' -e "\|^${app_name}|d" "${cart_dir}/applist.txt"
+    # Add app info to applist.txt
+    printf "${app_name} ${archive_url} ${filehash} ${app_dest}\n" >> "${cart_dir}/applist.txt"
+}
+
+# Subcommands
+# add: install packages
+# del: remove package
+# list: list installed packages
+# clean: remove cart directories/configuration
+# repo: manage repositories
+  # add: add repo
+  # del: remove repo
+  # clean: remove local repo lists
+
+domain_regex='(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]'
+add() {
+    hash="$2"
+    add_help() {
+        printf "Usage: cart add \"https://github.com/<some-repo>/releases/download/<some-release>/<some-app>.dmg\" \"sha256-hash\"\n" && exit 0
+    }
+    case "$1" in
+        "-h" | "--help")
+            add_help
+        ;;
+    esac
+
+    prep
+
+    archive_url="$1"
+    echo "Archive URL: ${archive_url}"
+    if [[ ! ${archive_url} =~ ${domain_regex} ]]
+    then
+        # If argument is local file, try to use it
+        if [[ -e ${archive_url} ]]
+        then
+            local_file="true"
+        else
+            add_help
+        fi
+    fi
+    download_file
+    check_hash "${hash}"
+    check_file "${filename}"
+    [[ "${file_type}" == "dmg" ]] && install_dmg
+    [[ "${file_type}" == "zip" ]] && install_zip
+    [[ -n "${app_name}" ]] && register_app "${app_name}"
+}
+
+del() {
+    app_name="$1"
+    del_help() {
+        printf "Usage: cart del <app>"
+        exit 0
+    }
+
+    case "$1" in
+        "-h" | "--help")
+            del_help
+        ;;
+    esac
+
+    prep
+    if [[ -e "${cart_dir}/applist.txt" ]]
+    then
+        app_names="$(cat "${cart_dir}/applist.txt" | awk '{print $1}')"
+        if echo "${app_names}" | grep -q "${app_name}"
+        then
+            app_data="$(grep "^${app_name}" "${cart_dir}/applist.txt" | head -1)"
+            app_dest="$(echo "${app_data}" | awk '{print $4}')"
+            if [[ -e "${app_dest}" ]]
+            then
+                echo "Removing ${app_dest}"
+                rm -rf "${app_dest}" && sed -i '' -e "\|^${app_name}|d" "${cart_dir}/applist.txt" &&\
+                    echo "Successfully removed ${app_name}"
+            fi
+        else
+            echo "No app named ${app_name} detected. Exiting."
+            exit 0
+        fi
+    else
+        echo "No applications installed with cart detected."
+    fi
+}
+
+list() {
+    list_help() {
+        printf "Usage: cart list"
+        exit 0
+    }
+
+    case "$*" in
+        "-h" | "--help")
+            list_help
+        ;;
+    esac
+
+    if [[ -e "${cart_dir}/applist.txt" ]]
+    then
+        cat "${cart_dir}/applist.txt" | awk '{print $1}'
+    else
+        echo "No applications installed with cart detected."
+    fi
+}
+
+clean() {
+    clean_help() {
+        printf "Usage: cart clean [--all]"
+    }
+
+    echo "Cleaning up ${cart_dir}"
+    if [[ "$*" == *"--all"* ]]
+    then
+       rm -rf "${cart_dir}"
+    else
+       printf "Excluding the following files from deletion:\ncart.config\napplist.txt\n"
+       find "${cart_dir}" | grep -vE "cart.config|applist.txt" | xargs rm
+    fi
+}
+
+#repo() {
+#    valid_repo_subcommands=("add" "del" "update" "clean")
+#    repo_add() {}
+#    repo_del() {}
+#    repo_update() {}
+#    repo_clean() {}
+#}
+
+subcommand=$1
+case $subcommand in
+    "add")
+        shift
+        add $@
+        ;;
+    "del")
+        shift
+        del $@
+        ;;
+    "list")
+        shift
+        list $@
+        ;;
+    "clean")
+        shift
+        clean $@
+        ;;
+    *)
+        printf "Usage: cart [ add, del, list, clean ]\nVersion: ${version}"
+        ;;
+esac
