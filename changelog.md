@@ -1,5 +1,13 @@
 ---
 
+## 0.0.4
+
+- Added Nix-Darwin module, minimal example
+- Added support for `$CART_CONFIG` environment variable
+- Added logic to reliably source configuration file
+- Quiet by default, use `cart_debug=true` for output
+- Fixed bug that would crash `cart` if archive file was already downloaded but the package was not yet installed (i.e. if installation was interrupted and archive file not cleaned up)
+
 ## 0.0.3
 
 - Refactored sections into functions for better organization/modularity

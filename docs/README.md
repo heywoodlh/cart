@@ -83,6 +83,59 @@ Cart can read a configuration file containing variables to override. A config fi
 
 The configuration file is a file containing shell variables. Therefore, any valid ZSH variable value should function. The `cart.config` file can be placed in the following locations (prioritized in this order, will stop on first file that exists in this list):
 
+- `$CART_CONFIG` environment variable
 - `./cart.config`
 - `$HOME/Library/Application Support/cart/cart.config`
 - `~/.config/cart/cart.config`
+
+# Usage with Nix-Darwin
+
+This repository contains a Nix-Darwin module.
+
+Here is an incomplete implementation for reference:
+
+```
+{
+  description = "nix-darwin flake boilerplate";
+
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    darwin.url = "github:LnL7/nix-darwin/master";
+    darwin.inputs.nixpkgs.follows = "nixpkgs";
+    cart.url = "github:heywoodlh/cart";
+  };
+
+  outputs = inputs@{ self, nixpkgs, darwin, cart ... }: {
+    darwinConfigurations = {
+      "m2-macbook-air" = darwin.lib.darwinSystem {
+        system = "aarch64-darwin";
+        specialArgs = inputs;
+        modules = [
+          ./configuration.nix
+          {
+            imports = [
+              "${cart}/darwin.nix"
+            ];
+            cart = {
+              enable = true;
+              user = "heywoodlh";
+              package = cart.packages.${system}.cart;
+              applications = [
+                {
+                  url = "https://github.com/utmapp/UTM/releases/download/v4.6.4/UTM.dmg";
+                  hash = "aad86726152b15a3e963cf778a0b0dfd8e818736b381aed2699d974a18845427";
+                }
+                {
+                  url = "https://github.com/podman-desktop/podman-desktop/releases/download/v1.17.2/podman-desktop-1.17.2-universal.dmg";
+                  hash = "d73c81a859f5792329818893736b28f8dd8a5243cca41c8573ed7c2095f69182";
+                }
+              ];
+            };
+            system.stateVersion = 6;
+          }
+        ];
+      };
+    };
+  };
+}
+```

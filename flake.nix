@@ -1,19 +1,21 @@
 {
-  description = "cart dev shell";
+  description = "cart flake";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-  inputs.nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-24.05";
+  inputs.nix-darwin = {
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   outputs = inputs @ {
     self,
     nixpkgs,
-    nixpkgs-stable,
     flake-utils,
+    nix-darwin,
   }:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-      stable-pkgs = nixpkgs-stable.legacyPackages.${system};
+      lib = pkgs.lib;
       cartpkg = pkgs.writeShellScriptBin "cart" ''
         ${self}/cart $@
       '';
@@ -26,7 +28,7 @@
         name = "nixos-configs devShell";
         buildInputs = with pkgs; [
           lefthook
-          stable-pkgs.gitleaks # bug in pkgs.gitleaks currently
+          gitleaks
           cartpkg
         ];
         shellHook = ''

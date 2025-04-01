@@ -3,7 +3,7 @@
 set -e
 
 # VERSION awareness
-version="0.0.3"
+version="0.0.4"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -29,30 +29,47 @@ file_type=""
 # Prep needed for actual package management (add, del)
 prep() {
     # Prep phase
-    # Use /Applications if root
-    if [[ $(id -u) == 0 ]]
-    then
-        echo "Running as root, apps will be installed to /Applications"
-        apps_folder="/Applications"
-    else
-        echo "Running unprivileged, apps will be installed to ${HOME}/Applications"
-        mkdir -p "${apps_folder}"
-    fi
+    [[ -n "${cart_debug}" ]] || cart_debug="false"
+
     # Usage if something besides URL is provided
     config_file=""
     source_config() {
         file="$1"
         if [[ -z "${config_file}" ]]
         then
-            [[ -e "${file}" ]] && echo "Config file discovered: ${file}" && source "${file}"
+            if [[ -e "${file}" ]]
+            then
+                [[ "${cart_debug}" == "true" ]] && echo "Config file discovered: ${file}"
+                source "${file}"
+            fi
         fi
     }
+
+    if [[ -n ${CART_CONFIG} ]]
+    then
+        source_config "${CART_CONFIG}"
+    else
+        source_config "./cart.config" \
+            || source_config "${HOME}/Library/Application Support/cart/cart.config" \
+            || source_config "${HOME}/.config/cart/cart.config"
+    fi
+
+    # Use /Applications if root
+    if [[ -z "${apps_folder}" ]]
+    then
+        apps_folder="${HOME}/Applications"
+        if [[ $(id -u) == 0 ]]
+        then
+            [[ "${cart_debug}" == "true" ]] && echo "Running as root, apps will be installed to /Applications"
+            apps_folder="/Applications"
+        else
+           [[ "${cart_debug}" == "true" ]] && echo "Running unprivileged, apps will be installed to ${HOME}/Applications"
+           apps_folder="${HOME}/Applications"
+        fi
+    fi
+
     # Create directories
-    mkdir -p "${mountpoints}" "${downloads}"
-    # Prioritized, stops on first discovery
-    source_config "./cart.config"
-    source_config "$HOME/Library/Application Support/cart/cart.config"
-    source_config "$HOME/.config/cart/cart.config"
+    mkdir -p "${mountpoints}" "${downloads}" "${apps_folder}"
 }
 
 filename=""
@@ -61,13 +78,14 @@ download_file() {
     [[ -e "${archive_url}" ]] && local_file="true"
     if [[ "${local_file}" == "true" ]]
     then
-        echo "Using local file ${archive_url}"
+        [[ "${cart_debug}" == "true" ]] && echo "Using local file ${archive_url}"
         filename="${archive_url}"
     else
         # Download filename
-        echo "Downloading ${archive_url}..."
+        [[ "${cart_debug}" == "true" ]] && echo "Downloading ${archive_url}..."
+        rm -rf "${downloads}" && mkdir -p "${downloads}" # clear downloads folder if incomplete downloads exist (i.e. if `cart add` is interrupted)
         filename="$(curl --progress-bar --output-dir "${downloads}" -OJsL "${archive_url}" -w "%{filename_effective}")"
-        echo "Output file: ${filename}"
+        [[ "${cart_debug}" == "true" ]] && echo "Output file: ${filename}"
     fi
 }
 
@@ -81,7 +99,7 @@ check_hash() {
         then
             printf "Incorrect file hash provided.\n${filename} hash: ${filehash}\nExiting." && exit 3
         else
-            printf "File hash looks good.\n"
+            [[ "${cart_debug}" == "true" ]] && printf "File hash looks good.\n"
         fi
     fi
 }
@@ -95,19 +113,20 @@ install_app() {
     then
         appfilepath="$(find "${app_path}" -maxdepth 1 -name "*.app")"
         appfile="$(basename ${appfilepath})"
-        echo "Copying: ${appfilepath} => ${apps_folder}/${appfile}"
+        [[ "${cart_debug}" == "true" ]] && echo "Copying: ${appfilepath} => ${apps_folder}/${appfile}"
         rsync -a --delete "${appfilepath}" "${apps_folder}"
         app_name="${appfile%.*}"
         app_dest="${apps_folder}/${appfile}"
     else
-        echo "Unable to find .app in ${app_path}."
+        [[ "${cart_debug}" == "true" ]] && echo "Unable to find .app in ${app_path}."
         false
     fi
 }
 
 install_dmg() {
     # Ensure that file is a valid dmg file
-    if ! echo "Ensuring ${filename} integrity" && hdiutil verify "${filename}" > /dev/null
+    [[ "${cart_debug}" == "true" ]] && echo "Ensuring ${filename} integrity"
+    if ! hdiutil verify "${filename}" &> /dev/null
     then
         echo "File ${filename} failed dmg integrity check. Cleaning up and Exiting."
         rm -f "${filename}"
@@ -116,13 +135,18 @@ install_dmg() {
 
     # Mount dmg if it doesn't exist
     basename="$(basename "${filename}")"
-    [[ -e "${mountpoints}/${basename}" ]] || echo "Mounting ${mountpoints}/${basename}." && hdiutil attach -mountpoint "${mountpoints}/${basename}" "${filename}" > /dev/null
+    [[ "${cart_debug}" == "true" ]] && echo "Mounting ${mountpoints}/${basename}."
+    rm -rf "${mountpoints}/${basename}"
+    mkdir -p "${mountpoints}"
+    [[ -e "${mountpoints}/${basename}" ]] || hdiutil attach -mountpoint "${mountpoints}/${basename}" "${filename}" > /dev/null
 
     install_app "${mountpoints}/${basename}"
 
     # Cleanup
-    [[ -e "${mountpoints}/${basename}" ]] && echo "Unmounting ${mountpoints}/${basename}." && hdiutil detach "${mountpoints}/${basename}" > /dev/null
-    [[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}" || true
+    [[ "${cart_debug}" == "true" ]] && echo "Unmounting ${mountpoints}/${basename}."
+    [[ -e "${mountpoints}/${basename}" ]] && hdiutil detach "${mountpoints}/${basename}" > /dev/null
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${downloads}/${basename}."
+    [[ -e "${downloads}/${basename}" ]] && rm -rf "${downloads}/${basename}" || true
 }
 
 install_zip() {
@@ -131,8 +155,10 @@ install_zip() {
     unzip -d "${mountpoints}/${basename}/" "${filename}"
     install_app "${mountpoints}/${basename}"
     # Cleanup
-    [[ -e "${mountpoints}/${basename}" ]] && echo "Cleaning up ${mountpoints}/${basename}." && rm -rf "${mountpoints}/${basename}" > /dev/null
-    [[ -e "${downloads}/${basename}" ]] && echo "Cleaning up ${downloads}/${basename}." && rm -rf "${downloads}/${basename}" || true
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${mountpoints}/${basename}."
+    [[ -e "${mountpoints}/${basename}" ]] && rm -rf "${mountpoints}/${basename}" > /dev/null
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${downloads}/${basename}."
+    [[ -e "${downloads}/${basename}" ]] && rm -rf "${downloads}/${basename}" || true
 }
 
 # Function to determine file type
@@ -187,7 +213,7 @@ add() {
     prep
 
     archive_url="$1"
-    echo "Archive URL: ${archive_url}"
+    [[ "${cart_debug}" == "true" ]] && echo "Archive URL: ${archive_url}"
     if [[ ! ${archive_url} =~ ${domain_regex} ]]
     then
         # If argument is local file, try to use it
@@ -198,6 +224,13 @@ add() {
             add_help
         fi
     fi
+
+    if grep -q "${archive_url}" "${cart_dir}/applist.txt" &>/dev/null
+    then
+        echo "App ${archive_url} installed."
+        exit 0
+    fi
+
     download_file
     check_hash "${hash}"
     check_file "${filename}"

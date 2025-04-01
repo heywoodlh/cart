@@ -48,4 +48,4 @@ For documentation on how to configure and use `cart` please refer to [the docume
     - [ ] del
     - [ ] update
   - [ ] repository verification (detect MITM -- i.e. something like GPG key verification?)
-- [ ] Nix-Darwin module
+- [x] Nix-Darwin module
