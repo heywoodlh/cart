@@ -24,7 +24,7 @@ in {
       description = ''
         User to install packages for.
       '';
-      type = types.string;
+      type = types.str;
     };
     applications = mkOption {
       default = [];
@@ -50,7 +50,7 @@ in {
         cart_dir="/Users/${cfg.user}/Library/Application Support/cart"
         cart_debug="true"
       '';
-      type = types.string;
+      type = types.str;
     };
   };
   config = let
