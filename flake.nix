@@ -30,6 +30,7 @@
           lefthook
           gitleaks
           cartpkg
+          jq
         ];
         shellHook = ''
           lefthook install

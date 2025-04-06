@@ -3,7 +3,7 @@
 set -e
 
 # VERSION awareness
-version="0.0.4"
+version="0.1.0"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -14,6 +14,9 @@ if ! uname | grep -qE '^Darwin' &>/dev/null
 then
     echo "Did not detect MacOS. Exiting."
     exit 1
+else
+    # Install command-line tools if not installed
+    pkgutil --pkg-info com.apple.pkg.CLTools_Executables &>/dev/null || xcode-select --install
 fi
 
 # Global variables, can be overridden in cart.config
@@ -117,6 +120,7 @@ install_app() {
         rsync -a --delete "${appfilepath}" "${apps_folder}"
         app_name="${appfile%.*}"
         app_dest="${apps_folder}/${appfile}"
+        [[ "${cart_debug}" == "true" ]] && echo "App name: ${app_name}"
     else
         [[ "${cart_debug}" == "true" ]] && echo "Unable to find .app in ${app_path}."
         false
@@ -180,12 +184,14 @@ register_app() {
     app_name="$1"
     mkdir -p "${cart_dir}"
 
-    # Create applist.txt if it doesn't exit
-    [[ ! -e "${cart_dir}/applist.txt" ]] && touch "${cart_dir}/applist.txt"
-    # Remove entry from applist.txt if already exists
-    sed -i '' -e "\|^${app_name}|d" "${cart_dir}/applist.txt"
-    # Add app info to applist.txt
-    printf "${app_name} ${archive_url} ${filehash} ${app_dest}\n" >> "${cart_dir}/applist.txt"
+    # Create applist.json if it doesn't exit
+    [[ ! -e "${cart_dir}/applist.json" ]] && echo '[]' > "${cart_dir}/applist.json"
+    # Remove entry from applist.json if already exists
+    sed -i '' -e "\|^${app_name}|d" "${cart_dir}/applist.json"
+    # Add app info to applist.json
+    cat "${cart_dir}/applist.json" | jq '. += [ { "name": "'${app_name}'", "source": "'${archive_url}'", "hash": "'${filehash}'", "path": "'${app_dest}'"} ]' > "${cart_dir}/applist.json.tmp"
+    cp "${cart_dir}/applist.json.tmp" "${cart_dir}/applist.json"
+    rm -f "${cart_dir}/applist.json.tmp"
 }
 
 # Subcommands
@@ -225,9 +231,9 @@ add() {
         fi
     fi
 
-    if grep -q "${archive_url}" "${cart_dir}/applist.txt" &>/dev/null
+    if grep -q "${archive_url}" "${cart_dir}/applist.json" &>/dev/null
     then
-        echo "App ${archive_url} installed."
+        echo "App ${archive_url} already installed. Exiting."
         exit 0
     fi
 
@@ -253,19 +259,26 @@ del() {
     esac
 
     prep
-    if [[ -e "${cart_dir}/applist.txt" ]]
+    if [[ -e "${cart_dir}/applist.json" ]]
     then
-        app_names="$(cat "${cart_dir}/applist.txt" | awk '{print $1}')"
-        if echo "${app_names}" | grep -q "${app_name}"
+        if cat "${cart_dir}/applist.json" | jq -r '.[] | select(.name == "'${app_name}'")' | grep -q "${app_name}"
         then
-            app_data="$(grep "^${app_name}" "${cart_dir}/applist.txt" | head -1)"
-            app_dest="$(echo "${app_data}" | awk '{print $4}')"
+            app_data="$(cat "${cart_dir}/applist.json" | jq -r '.[] | select(.name=="'${app_name}'")')"
+            app_dest="$(echo "${app_data}" | jq -r '.path')"
             if [[ -e "${app_dest}" ]]
             then
-                echo "Removing ${app_dest}"
-                rm -rf "${app_dest}" && sed -i '' -e "\|^${app_name}|d" "${cart_dir}/applist.txt" &&\
-                    echo "Successfully removed ${app_name}"
+                [[ "${cart_debug}" == "true" ]] && echo "Removing ${app_dest}"
+                if rm -rf "${app_dest}"
+                then
+                    [[ "${cart_debug}" == "true" ]] && echo "Successfully removed ${app_name}"
+                else
+                    echo "Failed to remove ${app_name}"
+                fi
             fi
+            # Remove app entry from applist.json with jq
+            cat "${cart_dir}/applist.json" | jq -r 'del(.[] | select(.name == "'${app_name}'"))' > "${cart_dir}/applist.json.tmp"
+            cp "${cart_dir}/applist.json.tmp" "${cart_dir}/applist.json"
+            rm -f "${cart_dir}/applist.json.tmp"
         else
             echo "No app named ${app_name} detected. Exiting."
             exit 0
@@ -277,19 +290,32 @@ del() {
 
 list() {
     list_help() {
-        printf "Usage: cart list"
+        printf "Usage: cart list [--all --json]"
         exit 0
     }
+
+    short_list="true"
 
     case "$*" in
         "-h" | "--help")
             list_help
         ;;
+        "-a" | "--all")
+            full_list="true"
+            short_list="false"
+        ;;
+        "-j" | "--json")
+            json_list="true"
+            short_list="false"
+        ;;
     esac
 
-    if [[ -e "${cart_dir}/applist.txt" ]]
+    if [[ -e "${cart_dir}/applist.json" ]]
     then
-        cat "${cart_dir}/applist.txt" | awk '{print $1}'
+        echo "Installed applications:"
+        [[ "${short_list}" == "true" ]] && cat "${cart_dir}/applist.json" | jq -r '.[].name' && exit 0
+        [[ "${full_list}" == "true" ]] && cat "${cart_dir}/applist.json" | jq '.' && exit 0
+        [[ "${json_list}" == "true" ]] && cat "${cart_dir}/applist.json" && exit 0
     else
         echo "No applications installed with cart detected."
     fi
@@ -305,8 +331,8 @@ clean() {
     then
        rm -rf "${cart_dir}"
     else
-       printf "Excluding the following files from deletion:\ncart.config\napplist.txt\n"
-       find "${cart_dir}" | grep -vE "cart.config|applist.txt" | xargs rm
+       printf "Excluding the following files from deletion:\ncart.config\napplist.json\n"
+       find "${cart_dir}" | grep -vE "cart.config|applist.json" | xargs rm
     fi
 }
 

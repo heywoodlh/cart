@@ -1,5 +1,12 @@
 ---
 
+## 0.1.0
+
+- Converted applist.txt to JSON `applist.json` (fixes [#1](https://github.com/heywoodlh/cart/issues/1)):
+  - Parses JSON
+- Automatically install Apple's Command Line tools if not detected
+- Added `--all` and `--json` flags to `list` subcommand
+
 ## 0.0.4
 
 - Added Nix-Darwin module, minimal example

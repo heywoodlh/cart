@@ -71,6 +71,7 @@ shasum -a 256 ~/Downloads/UTM.dmg | awk '{print $1}'
 To uninstall an application, use `cart list` and `cart del`:
 
 ```
+export cart_debug=true #optional
 cart list
 cart del <name>
 ```

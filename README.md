@@ -4,6 +4,8 @@ Cart is an unprivileged MacOS package manager that uses built-in MacOS utilities
 
 # Installation
 
+> Cart relies on MacOS command line utilities including `jq` which is not provided on MacOS versions older than MacOS 15 Sequoia.
+
 ```
 mkdir -p ~/bin
 curl -L 'https://raw.githubusercontent.com/heywoodlh/cart/refs/heads/main/cart' -o ~/bin/cart
