@@ -3,11 +3,11 @@
 set -e
 
 # VERSION awareness
-version="0.1.0"
+version="0.1.1"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
-PATH="/bin:/usr/bin:/sbin:/usr/sbin"
+export PATH="/bin:/usr/bin:/sbin:/usr/sbin"
 
 # Only support MacOS
 if ! uname | grep -qE '^Darwin' &>/dev/null
@@ -24,6 +24,13 @@ downloads="/tmp/cart/downloads"
 mountpoints="/tmp/cart/mountpoints"
 apps_folder="${HOME}/Applications"
 cart_dir="${HOME}/Library/Application Support/cart"
+jq_force_install="false"
+jq_version="1.7.1"
+jq_arm64_hash="0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a"
+jq_x86_64_hash="4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443"
+# grab hashes with:
+# jq_version="1.7.1" curl -Ls https://github.com/jqlang/jq/releases/download/jq-$jq_version/jq-macos-arm64 -o /tmp/jq-arm64 && shasum -a 256 /tmp/jq-arm64
+# jq_version="1.7.1" curl -Ls https://github.com/jqlang/jq/releases/download/jq-$jq_version/jq-macos-amd64 -o /tmp/jq-amd64 && shasum -a 256 /tmp/jq-amd64
 
 # Other global variables, not managed with config
 archive_url=""
@@ -73,6 +80,21 @@ prep() {
 
     # Create directories
     mkdir -p "${mountpoints}" "${downloads}" "${apps_folder}"
+
+    # For older MacOS versions, install jq
+    export PATH="${cart_dir}/bin:${PATH}"
+    if ! command -v jq &>/dev/null || [[ "${jq_force_install}" == "true" ]]
+    then
+        [[ "${cart_debug}" == "true" ]] && echo "Installing jq"
+        mkdir -p "${cart_dir}/bin"
+        [[ "$(arch)" == "arm64" ]] && jq_arch="arm64" && jq_hash="${jq_arm64_hash}"
+        [[ -z "${jq_arch}" ]] && jq_arch="amd64" && jq_hash="${jq_x86_64_hash}"
+        jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-macos-${jq_arch}"
+        [[ "${cart_debug}" == "true" ]] && echo "Downloading: ${jq_url}"
+        curl -Ls "${jq_url}" -o "${cart_dir}/bin/jq" && chmod +x "${cart_dir}/bin/jq"
+        [[ "${jq_hash}" != $(shasum -a 256 "${cart_dir}/bin/jq" | awk '{print $1}') ]] && echo "jq hash mismatch. Exiting." && exit 1
+    fi
+    command -v jq &>/dev/null || { echo "jq not found. Exiting."; exit 1; }
 }
 
 filename=""
@@ -171,6 +193,7 @@ check_file() {
     file_data="$(file -I "${file}")"
     echo -n "${file_data}" | grep -q 'application/zlib' && file_type="dmg"
     echo -n "${file_data}" | grep -q 'application/zip' && file_type="zip"
+    echo -n "${file_data}" | grep -q 'application/x-xz' && file_type="xz"
 
     if [[ -z "${file_type}" ]]
     then
@@ -193,16 +216,6 @@ register_app() {
     cp "${cart_dir}/applist.json.tmp" "${cart_dir}/applist.json"
     rm -f "${cart_dir}/applist.json.tmp"
 }
-
-# Subcommands
-# add: install packages
-# del: remove package
-# list: list installed packages
-# clean: remove cart directories/configuration
-# repo: manage repositories
-  # add: add repo
-  # del: remove repo
-  # clean: remove local repo lists
 
 domain_regex='(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#/%=~_|]'
 add() {
@@ -242,6 +255,7 @@ add() {
     check_file "${filename}"
     [[ "${file_type}" == "dmg" ]] && install_dmg
     [[ "${file_type}" == "zip" ]] && install_zip
+    [[ "${file_type}" == "xz" ]] && install_dmg
     [[ -n "${app_name}" ]] && register_app "${app_name}"
 }
 
@@ -293,6 +307,8 @@ list() {
         printf "Usage: cart list [--all --json]"
         exit 0
     }
+
+    prep
 
     short_list="true"
 

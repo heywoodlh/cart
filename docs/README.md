@@ -2,6 +2,16 @@
 
 # Installation
 
+## Privileged, system-wide
+
+```
+sudo mkdir -p /usr/local/bin
+sudo curl -L 'https://raw.githubusercontent.com/heywoodlh/cart/refs/heads/main/cart' -o /usr/local/bin/cart
+sudo chmod +x /usr/local/bin/cart
+```
+
+## Unprivileged, local user
+
 ```
 mkdir -p ~/bin
 curl -L 'https://raw.githubusercontent.com/heywoodlh/cart/refs/heads/main/cart' -o ~/bin/cart

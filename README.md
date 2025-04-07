@@ -2,26 +2,9 @@
 
 Cart is an unprivileged MacOS package manager that uses built-in MacOS utilities for installing packages.
 
-# Installation
-
-> Cart relies on MacOS command line utilities including `jq` which is not provided on MacOS versions older than MacOS 15 Sequoia.
-
-```
-mkdir -p ~/bin
-curl -L 'https://raw.githubusercontent.com/heywoodlh/cart/refs/heads/main/cart' -o ~/bin/cart
-chmod +x ~/bin/cart
-export PATH="$HOME/bin:$PATH"
-```
-
-To ensure ability to use `cart` executable between shell sessions, add the following to your shell's configuration file:
-
-```
-export PATH="$HOME/bin:$PATH"
-```
-
 # Usage
 
-For documentation on how to configure and use `cart` please refer to [the documentation](./docs/README.md)
+For documentation on installation, configuration and usage of `cart` please refer to [the documentation](./docs/README.md)
 
 ## Planned features
 

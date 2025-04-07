@@ -1,5 +1,10 @@
 ---
 
+## 0.1.1
+
+- Supports xz DMG files (fixes [#4](https://github.com/heywoodlh/cart/issues/4))
+- Install `jq` executable when not found locally (fixes [#3](https://github.com/heywoodlh/cart/issues/3))
+
 ## 0.1.0
 
 - Converted applist.txt to JSON `applist.json` (fixes [#1](https://github.com/heywoodlh/cart/issues/1)):
