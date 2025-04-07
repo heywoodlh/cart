@@ -5,10 +5,8 @@ on:
   push:
     branches:
       - 'main'
-    paths-ignore:
-      - 'example/**'
-      - '.github/**'
-      - 'README.md'
+    paths:
+      - 'cart'
 
 jobs:
   test-legacy:

@@ -5,8 +5,20 @@ pre-commit:
         gitleaks detect --verbose --redact
     check-changelog:
       run: |
-        if ! git status | grep -E 'modified|new file' | grep changelog.md
+        if git status | grep -E 'modified:.*cart$'
         then
-          echo "Update the changelog, fool."
-          exit 1
+          error="false"
+          if ! git diff --staged cart | grep -q 'VERSION'
+          then
+            echo "Update the version in cart, fool."
+            error="true"
+          fi
+
+          if ! git status | grep -q changelog.md
+          then
+            echo "Update the changelog, fool."
+            error="true"
+          fi
+
+          [[ "$error" == "true" ]] && echo "Error encountered, exiting." && exit 1
         fi
