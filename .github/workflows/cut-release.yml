@@ -18,24 +18,7 @@ jobs:
 
       - name: Test functionality
         run: |
-          export cart_debug="true"
-          # DMG test
-          ./cart add https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
-          ./cart list | grep -i UTM
-          # Fail if app doesn't exist
-          [[ -e /Users/runner/Applications/UTM.app ]] || exit 20
-          ./cart del UTM
-          # Fail if app does exist
-          [[ ! -e /Users/runner/Applications/UTM.app ]] || exit 21
-
-          # Zip test
-          ./cart add https://iterm2.com/downloads/stable/iTerm2-3_5_5.zip
-          ./cart list | grep -i iTerm
-          # Fail if app doesn't exist
-          [[ -e /Users/runner/Applications/iTerm.app ]] || exit 20
-          ./cart del iTerm
-          # Fail if app does exist
-          [[ ! -e /Users/runner/Applications/iTerm.app ]] || exit 21
+          ./test.sh
 
   cut-release:
     name: Cut release
@@ -47,24 +30,7 @@ jobs:
 
       - name: Test functionality
         run: |
-          export cart_debug="true"
-          # DMG test
-          ./cart add https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
-          ./cart list | grep -i UTM
-          # Fail if app doesn't exist
-          [[ -e /Users/runner/Applications/UTM.app ]] || exit 20
-          ./cart del UTM
-          # Fail if app does exist
-          [[ ! -e /Users/runner/Applications/UTM.app ]] || exit 21
-
-          # Zip test
-          ./cart add https://iterm2.com/downloads/stable/iTerm2-3_5_5.zip
-          ./cart list | grep -i iTerm
-          # Fail if app doesn't exist
-          [[ -e /Users/runner/Applications/iTerm.app ]] || exit 20
-          ./cart del iTerm
-          # Fail if app does exist
-          [[ ! -e /Users/runner/Applications/iTerm.app ]] || exit 21
+          ./test.sh
 
       - name: Get current version
         run: |

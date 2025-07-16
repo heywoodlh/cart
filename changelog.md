@@ -1,5 +1,12 @@
 ---
 
+## 0.1.2
+
+- Using `test.sh` script for testing in GitHub Actions
+- Added more tests to `test.sh`
+- Bumped version of jq being installed
+- Nix package is a copy of the shell script, not a wrapper
+
 ## 0.1.1
 
 - Supports xz DMG files (fixes [#4](https://github.com/heywoodlh/cart/issues/4))

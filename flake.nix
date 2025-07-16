@@ -16,9 +16,12 @@
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
       lib = pkgs.lib;
-      cartpkg = pkgs.writeShellScriptBin "cart" ''
-        ${self}/cart $@
-      '';
+      stdenv = pkgs.stdenv;
+      cartpkg = stdenv.mkDerivation {
+        name = "cart";
+        builder = pkgs.bash;
+        args = [ "-c" "${pkgs.coreutils}/bin/mkdir -p $out/bin && ${pkgs.coreutils}/bin/cp ${self}/cart $out/bin/cart" ];
+      };
     in {
       packages = rec {
         cart = cartpkg;
@@ -27,6 +30,7 @@
       devShell = pkgs.mkShell {
         name = "nixos-configs devShell";
         buildInputs = with pkgs; [
+          cartpkg
           lefthook
           gitleaks
           cartpkg

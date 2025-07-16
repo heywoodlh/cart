@@ -3,7 +3,7 @@
 set -e
 
 # VERSION awareness
-version="0.1.1"
+version="0.1.2"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -25,12 +25,12 @@ mountpoints="/tmp/cart/mountpoints"
 apps_folder="${HOME}/Applications"
 cart_dir="${HOME}/Library/Application Support/cart"
 jq_force_install="false"
-jq_version="1.7.1"
-jq_arm64_hash="0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a"
-jq_x86_64_hash="4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443"
+jq_version="1.8.1"
+jq_arm64_hash="a9fe3ea2f86dfc72f6728417521ec9067b343277152b114f4e98d8cb0e263603"
+jq_x86_64_hash="e80dbe0d2a2597e3c11c404f03337b981d74b4a8504b70586c354b7697a7c27f"
 # grab hashes with:
-# jq_version="1.7.1" curl -Ls https://github.com/jqlang/jq/releases/download/jq-$jq_version/jq-macos-arm64 -o /tmp/jq-arm64 && shasum -a 256 /tmp/jq-arm64
-# jq_version="1.7.1" curl -Ls https://github.com/jqlang/jq/releases/download/jq-$jq_version/jq-macos-amd64 -o /tmp/jq-amd64 && shasum -a 256 /tmp/jq-amd64
+# jq_version="1.8.1" curl -Ls https://github.com/jqlang/jq/releases/download/jq-$jq_version/jq-macos-arm64 -o /tmp/jq-arm64 && shasum -a 256 /tmp/jq-arm64
+# jq_version="1.8.1" curl -Ls https://github.com/jqlang/jq/releases/download/jq-$jq_version/jq-macos-amd64 -o /tmp/jq-amd64 && shasum -a 256 /tmp/jq-amd64
 
 # Other global variables, not managed with config
 archive_url=""
