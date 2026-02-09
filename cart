@@ -3,7 +3,7 @@
 set -e
 
 # VERSION awareness
-version="0.1.2"
+version="0.1.3"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -178,7 +178,7 @@ install_dmg() {
 install_zip() {
     basename="$(basename "${filename}")"
     mkdir -p "${mountpoints}/${basename}"
-    unzip -d "${mountpoints}/${basename}/" "${filename}"
+    unzip -o -d "${mountpoints}/${basename}" "${filename}"
     install_app "${mountpoints}/${basename}"
     # Cleanup
     [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${mountpoints}/${basename}."
@@ -191,6 +191,7 @@ install_zip() {
 check_file() {
     file="$1"
     file_data="$(file -I "${file}")"
+    echo -n "${file_data}" | grep -q 'application/x-bzip2' && file_type="dmg"
     echo -n "${file_data}" | grep -q 'application/zlib' && file_type="dmg"
     echo -n "${file_data}" | grep -q 'application/zip' && file_type="zip"
     echo -n "${file_data}" | grep -q 'application/x-xz' && file_type="xz"

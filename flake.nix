@@ -23,6 +23,7 @@
         args = [ "-c" "${pkgs.coreutils}/bin/mkdir -p $out/bin && ${pkgs.coreutils}/bin/cp ${self}/cart $out/bin/cart" ];
       };
     in {
+      darwinModules.cart = import ./darwin.nix;
       packages = rec {
         cart = cartpkg;
         default = cart;

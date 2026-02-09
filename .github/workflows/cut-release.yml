@@ -9,20 +9,21 @@ on:
       - 'cart'
 
 jobs:
-  test-legacy:
-    name: Test functionality on legacy MacOS versions
-    runs-on: macos-13
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  # GitHub no longer provides older runners
+  #test-legacy:
+  #  name: Test functionality on legacy MacOS versions
+  #  runs-on: macos-13
+  #  steps:
+  #    - name: Checkout repository
+  #      uses: actions/checkout@v4
 
-      - name: Test functionality
-        run: |
-          ./test.sh
+  #    - name: Test functionality
+  #      run: |
+  #        ./test.sh
 
   cut-release:
     name: Cut release
-    needs: test-legacy
+    #needs: test-legacy
     runs-on: macos-latest
     steps:
       - name: Checkout repository

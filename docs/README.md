@@ -122,11 +122,13 @@ Here is an incomplete implementation for reference:
         system = "aarch64-darwin";
         specialArgs = inputs;
         modules = [
+          cart.darwinModules.${system}.cart
           ./configuration.nix
           {
-            imports = [
-              "${cart}/darwin.nix"
-            ];
+            # Old way
+            #imports = [
+            #  "${cart}/darwin.nix"
+            #];
             cart = {
               enable = true;
               user = "heywoodlh";

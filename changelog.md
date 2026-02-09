@@ -1,5 +1,12 @@
 ---
 
+## 0.1.3
+
+- Added `darwinModule` output and documentation
+- Overwrite zip files noninteractively
+- Support DMG files that are `x-bzip2` file types
+- Disabled legacy MacOS testing until I set up self-hosted runner
+
 ## 0.1.2
 
 - Using `test.sh` script for testing in GitHub Actions
