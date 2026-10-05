@@ -1,0 +1,20 @@
+when:
+  - event: ["push"]
+    branch: ["main"]
+
+engine: "nixery"
+
+dependencies:
+  nixpkgs:
+    - git
+
+steps:
+  - name: Configure GitHub credentials
+    command: |
+      git config --global credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
+
+  - name: Push main to GitHub
+    command: |
+      git remote add github https://github.com/heywoodlh/cart.git
+      git fetch github main
+      git push github HEAD:refs/heads/main

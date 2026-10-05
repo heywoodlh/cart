@@ -1,0 +1,40 @@
+name: Sync main to Tangled
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-main-to-tangled
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.TANGLED_SSH_PRIVATE_KEY }}
+
+      - name: Trust Tangled host key
+        run: |
+          install -d -m 700 ~/.ssh
+          cat >> ~/.ssh/known_hosts <<'EOF'
+          tangled.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII2UShEm/FFPmYZUizaPnIqOJuynoCQpcLhl5PPHd02n
+          EOF
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Push main to Tangled
+        run: |
+          git remote add tangled git@tangled.org:heywoodlh.io/cart
+          git fetch tangled main
+          git push tangled HEAD:refs/heads/main
