@@ -42,28 +42,28 @@ jobs:
       - name: Test functionality
         run: ./test.sh
 
-      - name: Validate release changelog
+      - name: Validate version changelog
         shell: bash
         run: |
           set -euo pipefail
-          release="$(sed -nE 's/^RELEASE="([^"]+)"$/\1/p' cart)"
-          if [ -z "$release" ] || [ "$(printf '%s\n' "$release" | wc -l)" -ne 1 ]; then
-            echo 'cart must define exactly one RELEASE="..." variable.' >&2
+          version="$(sed -nE 's/^version="([^"]+)"$/\1/p' cart)"
+          if [ -z "$version" ] || [ "$(printf '%s\n' "$version" | wc -l)" -ne 1 ]; then
+            echo 'cart must define exactly one version="..." variable.' >&2
             exit 1
           fi
 
-          if ! git check-ref-format --allow-onelevel "refs/tags/$release"; then
-            echo "RELEASE $release is not a valid tag name." >&2
+          if ! git check-ref-format --allow-onelevel "refs/tags/$version"; then
+            echo "version $version is not a valid tag name." >&2
             exit 1
           fi
 
-          if ! grep -Fxq -- "## $release" changelog.md; then
-            echo "changelog.md does not contain a ## $release heading." >&2
+          if ! grep -Fxq -- "## $version" changelog.md; then
+            echo "changelog.md does not contain a ## $version heading." >&2
             exit 1
           fi
 
-          echo "release=$release" >> "$GITHUB_OUTPUT"
-        id: release
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+        id: version
 
       - name: Configure Tangled SSH key
         uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # v0.9.1
@@ -80,22 +80,22 @@ jobs:
 
       - name: Overwrite release tag
         env:
-          RELEASE: ${{ steps.release.outputs.release }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag --force --annotate --message "Release $RELEASE" -- "$RELEASE" "$GITHUB_SHA"
-          git push --force origin "refs/tags/$RELEASE"
+          git tag --force --annotate --message "Release $VERSION" -- "$VERSION" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$VERSION"
           git remote add tangled git@tangled.org:heywoodlh.io/cart
-          git push --force tangled "refs/tags/$RELEASE"
+          git push --force tangled "refs/tags/$VERSION"
           shasum -a 256 ./cart > cart.checksum
 
       - uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           artifacts: "cart,cart.checksum,docs/README.md,cart.config"
           bodyFile: "changelog.md"
-          tag: ${{ steps.release.outputs.release }}
+          tag: ${{ steps.version.outputs.version }}
           makeLatest: true
           replacesArtifacts: true
           allowUpdates: true
