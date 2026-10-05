@@ -48,6 +48,30 @@ touch "${fixture_dir}/tar/contained/NestedTar.app/Contents/Info.plist"
 ./cart del NestedTar
 [[ ! -e "/tmp/cart-test/Applications/NestedTar.app" ]] || exit 21
 
+# XZ-compressed disk image test
+mkdir -p "${fixture_dir}/xz/XzDmg.app/Contents"
+touch "${fixture_dir}/xz/XzDmg.app/Contents/Info.plist"
+hdiutil create -quiet -fs HFS+ -srcfolder "${fixture_dir}/xz" -format UDZO -ov "${fixture_dir}/xz.dmg"
+xz -zkf "${fixture_dir}/xz.dmg"
+./cart add "${fixture_dir}/xz.dmg.xz"
+[[ -e "/tmp/cart-test/Applications/XzDmg.app" ]] || exit 20
+./cart del XzDmg
+[[ ! -e "/tmp/cart-test/Applications/XzDmg.app" ]] || exit 21
+
+# Invalid XZ disk image must fail without leaving a decompressed image
+printf 'not a disk image' > "${fixture_dir}/invalid.dmg"
+xz -zkf "${fixture_dir}/invalid.dmg"
+if ./cart add "${fixture_dir}/invalid.dmg.xz"
+then
+    exit 22
+fi
+[[ ! -e "/tmp/cart-test/downloads/invalid.dmg" ]] || exit 23
+if ./cart add "file://${fixture_dir}/invalid.dmg.xz"
+then
+    exit 24
+fi
+[[ ! -e "/tmp/cart-test/downloads/invalid.dmg.xz" ]] || exit 25
+
 # Archive without an application must fail and remove its extraction directory
 mkdir -p "${fixture_dir}/no-app/contained"
 touch "${fixture_dir}/no-app/contained/README.txt"
