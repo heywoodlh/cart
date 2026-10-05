@@ -7,6 +7,14 @@ on:
       - 'main'
     paths:
       - 'cart'
+      - 'changelog.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cut-release
+  cancel-in-progress: false
 
 jobs:
   # GitHub no longer provides older runners
@@ -23,26 +31,71 @@ jobs:
 
   cut-release:
     name: Cut release
-    #needs: test-legacy
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Test functionality
-        run: |
-          ./test.sh
+        run: ./test.sh
 
-      - name: Get current version
+      - name: Validate version changelog
+        shell: bash
         run: |
-          echo version="$(./cart | /usr/bin/tail -1 | /usr/bin/awk '{print $2}')" >> $GITHUB_ENV
+          set -euo pipefail
+          version="$(sed -nE 's/^version="([^"]+)"$/\1/p' cart)"
+          if [ -z "$version" ] || [ "$(printf '%s\n' "$version" | wc -l)" -ne 1 ]; then
+            echo 'cart must define exactly one version="..." variable.' >&2
+            exit 1
+          fi
+
+          if ! git check-ref-format --allow-onelevel "refs/tags/$version"; then
+            echo "version $version is not a valid tag name." >&2
+            exit 1
+          fi
+
+          if ! grep -Fxq -- "## $version" changelog.md; then
+            echo "changelog.md does not contain a ## $version heading." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+        id: version
+
+      - name: Configure Tangled SSH key
+        uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.TANGLED_SSH_PRIVATE_KEY }}
+
+      - name: Trust Tangled host key
+        run: |
+          install -d -m 700 ~/.ssh
+          cat >> ~/.ssh/known_hosts <<'EOF'
+          tangled.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII2UShEm/FFPmYZUizaPnIqOJuynoCQpcLhl5PPHd02n
+          EOF
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Overwrite release tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --force --annotate --message "Release $VERSION" -- "$VERSION" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$VERSION"
+          git remote add tangled git@tangled.org:heywoodlh.io/cart
+          git push --force tangled "refs/tags/$VERSION"
           shasum -a 256 ./cart > cart.checksum
 
-      - uses: ncipollo/release-action@v1
+      - uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           artifacts: "cart,cart.checksum,docs/README.md,cart.config"
           bodyFile: "changelog.md"
-          tag: ${{ env.version }}
+          tag: ${{ steps.version.outputs.version }}
           makeLatest: true
           replacesArtifacts: true
           allowUpdates: true
