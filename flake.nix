@@ -2,16 +2,12 @@
   description = "cart flake";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-  inputs.nix-darwin = {
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   outputs = inputs @ {
     self,
     nixpkgs,
     flake-utils,
-    nix-darwin,
   }:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};

@@ -24,7 +24,7 @@ For documentation on installation, configuration and usage of `cart` please refe
 - [x] Support archive formats handled by built-in macOS tools
   - [x] Zip files
   - [x] Tar archives (including `.tar.xz`)
-  - [ ] Pkg files
+  - [x] Pkg files
   - [ ] Executables?
 - [x] Configuration file `$HOME/Library/Application Support/cart/cart.config`
 - [ ] Repository list support (i.e. remote webserver/file with lists of apps)

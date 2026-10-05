@@ -1,112 +1,183 @@
 #!/usr/bin/env zsh
-mkdir -p /tmp/cart-test
+set -e
+
+work_dir="/tmp/cart-test"
+fixture_dir="${work_dir}/fixtures"
+apps_dir="${work_dir}/Applications"
+rm -rf "${work_dir}" /tmp/cart.config
+mkdir -p "${fixture_dir}" "${work_dir}/bin"
+
 cat >/tmp/cart.config <<EOL
-downloads="/tmp/cart-test/downloads"
-mountpoints="/tmp/cart-test/mountpoints"
+downloads="${work_dir}/downloads"
+mountpoints="${work_dir}/mountpoints"
 local_file="false"
-apps_folder="/tmp/cart-test/Applications"
-cart_dir="/tmp/cart-test"
+apps_folder="${apps_dir}"
+cart_dir="${work_dir}"
 EOL
+
+# Cart uses jq for its installed-app registry. Keep this suite offline by
+# supplying a small JSON-compatible test double for only Cart's jq queries.
+cat >"${work_dir}/bin/jq" <<'EOF'
+#!/usr/bin/perl
+use strict;
+use warnings;
+use JSON::PP qw(decode_json encode_json);
+
+my $raw = @ARGV && $ARGV[0] eq '-r' ? shift @ARGV : '';
+my $filter = shift @ARGV;
+my $input = do { local $/; <STDIN> };
+my $data = decode_json(length($input // '') ? $input : '[]');
+
+if ($filter =~ /^\. \+= \[ (\{.*\}) \]$/s) {
+    push @{$data}, decode_json($1);
+    print encode_json($data);
+} elsif ($filter =~ /^del\(\.\[\] \| select\(\.name\s*==\s*"(.*)"\)\)$/) {
+    my $name = $1;
+    print encode_json([grep { $_->{name} ne $name } @{$data}]);
+} elsif ($filter =~ /^\.\[\] \| select\(\.name\s*==\s*"(.*)"\)$/) {
+    my $name = $1;
+    print encode_json($_) . "\n" for grep { $_->{name} eq $name } @{$data};
+} elsif ($filter eq '.path') {
+    print $data->{path} . "\n";
+} elsif ($filter eq '.[].name') {
+    print $_->{name} . "\n" for @{$data};
+} elsif ($filter eq '.') {
+    print encode_json($data) . "\n";
+} else {
+    die "Unsupported test jq filter: $filter\n";
+}
+EOF
+chmod +x "${work_dir}/bin/jq"
 
 export cart_debug="true"
 export CART_CONFIG=/tmp/cart.config
 
-# DMG test
-./cart add https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg 1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1
-./cart list | grep -i UTM
-# Fail if app doesn't exist
-[[ -e /tmp/cart-test/Applications/UTM.app ]] || exit 20
-./cart del UTM
-# Fail if app does exist
-[[ ! -e /tmp/cart-test/Applications/UTM.app ]] || exit 21
+make_app_tree() {
+    tree="$1"
+    layout="$2"
+    app_name="$3"
+    case "${layout}" in
+        root) app_path="${tree}/${app_name}.app" ;;
+        direct) app_path="${tree}/test.app" ; app_name="test" ;;
+        nested) app_path="${tree}/out/test.app" ; app_name="test" ;;
+        *) return 1 ;;
+    esac
+    mkdir -p "${app_path}/Contents"
+    printf '%s\n' "${tree}-${layout}" > "${app_path}/Contents/fixture.txt"
+    printf '%s\n' "${app_name}" > "${tree}/expected-app-name"
+}
 
-# Zip test
-./cart add https://iterm2.com/downloads/stable/iTerm2-3_5_5.zip
-./cart list | grep -i iTerm
-# Fail if app doesn't exist
-[[ -e /tmp/cart-test/Applications/iTerm.app ]] || exit 20
-./cart del iTerm
-# Fail if app does exist
-[[ ! -e /tmp/cart-test/Applications/iTerm.app ]] || exit 21
+assert_cart_install() {
+    archive="$1"
+    expected_app="$2"
+    hash="$(shasum -a 256 "${archive}" | awk '{print $1}')"
+    ./cart add "${archive}" "${hash}"
+    ./cart list | grep -Fxq "${expected_app}"
+    [[ -f "${apps_dir}/${expected_app}.app/Contents/fixture.txt" ]]
+    ./cart del "${expected_app}"
+    [[ ! -e "${apps_dir}/${expected_app}.app" ]]
+}
 
-# App with spaces test
-./cart add https://github.com/podman-desktop/podman-desktop/releases/download/v1.19.2/podman-desktop-1.19.2-arm64.dmg 7208c4c29124bd7ec97c153a9f6ad670ff2b09e72435a373d98d9c1bcd3b3f94
-./cart list | grep -i "Podman Desktop"
-# Fail if app doesn't exist
-[[ -e "/tmp/cart-test/Applications/Podman Desktop.app" ]] || exit 20
-./cart del "Podman Desktop"
-# Fail if app does exist
-[[ ! -e "/tmp/cart-test/Applications/Podman Desktop.app" ]] || exit 21
+create_and_test_archives() {
+    format="$1"
+    layout="$2"
+    app_name="${format}-${layout}"
+    tree="${fixture_dir}/${format}-${layout}"
+    make_app_tree "${tree}" "${layout}" "${app_name}"
+    expected_app="${app_name}"
+    [[ "${layout}" == root ]] || expected_app="test"
 
-# Nested tar archive test
-fixture_dir="/tmp/cart-test/fixtures"
-mkdir -p "${fixture_dir}/tar/contained/NestedTar.app/Contents"
-touch "${fixture_dir}/tar/contained/NestedTar.app/Contents/Info.plist"
-/usr/bin/tar -cJf "${fixture_dir}/nested.tar.xz" -C "${fixture_dir}/tar" .
-./cart add "${fixture_dir}/nested.tar.xz"
-[[ -e "/tmp/cart-test/Applications/NestedTar.app" ]] || exit 20
-./cart del NestedTar
-[[ ! -e "/tmp/cart-test/Applications/NestedTar.app" ]] || exit 21
+    case "${format}" in
+        dmg)
+            archive="${fixture_dir}/${format}-${layout}.dmg"
+            hdiutil create -quiet -fs HFS+ -srcfolder "${tree}" -format UDZO -ov "${archive}"
+        ;;
+        tar-gz)
+            archive="${fixture_dir}/${format}-${layout}.tar.gz"
+            /usr/bin/tar -czf "${archive}" -C "${tree}" .
+        ;;
+        tar)
+            archive="${fixture_dir}/${format}-${layout}.tar"
+            /usr/bin/tar -cf "${archive}" -C "${tree}" .
+        ;;
+        tar-bz2)
+            archive="${fixture_dir}/${format}-${layout}.tar.bz2"
+            /usr/bin/tar -cjf "${archive}" -C "${tree}" .
+        ;;
+        tar-xz)
+            archive="${fixture_dir}/${format}-${layout}.tar.xz"
+            /usr/bin/tar -cJf "${archive}" -C "${tree}" .
+        ;;
+        zip)
+            archive="${fixture_dir}/${format}-${layout}.zip"
+            (cd "${tree}" && /usr/bin/zip -qr "${archive}" .)
+        ;;
+        xz)
+            disk_image="${fixture_dir}/${format}-${layout}.dmg"
+            archive="${disk_image}.xz"
+            hdiutil create -quiet -fs HFS+ -srcfolder "${tree}" -format UDZO -ov "${disk_image}"
+            xz -zkf "${disk_image}"
+        ;;
+        pkg)
+            archive="${fixture_dir}/${format}-${layout}.pkg"
+            if [[ "${layout}" == root ]]
+            then
+                scripts_dir="${fixture_dir}/${format}-${layout}-scripts"
+                mkdir -p "${scripts_dir}"
+                cat >"${scripts_dir}/postinstall" <<'EOF'
+#!/bin/sh
+printf 'executed\n' > /tmp/cart-test/pkg-script-ran
+EOF
+                chmod +x "${scripts_dir}/postinstall"
+                pkgbuild --root "${tree}" --scripts "${scripts_dir}" --identifier "com.cart.test.${format}.${layout}" --version 1.0 --install-location Applications "${archive}"
+            else
+                pkgbuild --root "${tree}" --identifier "com.cart.test.${format}.${layout}" --version 1.0 --install-location Applications "${archive}"
+            fi
+        ;;
+        *) return 1 ;;
+    esac
+    assert_cart_install "${archive}" "${expected_app}"
+    if [[ "${format}" == pkg && "${layout}" == root ]]
+    then
+        [[ ! -e "${work_dir}/pkg-script-ran" ]]
+    fi
+}
 
-# XZ-compressed disk image test
-mkdir -p "${fixture_dir}/xz/XzDmg.app/Contents"
-touch "${fixture_dir}/xz/XzDmg.app/Contents/Info.plist"
-hdiutil create -quiet -fs HFS+ -srcfolder "${fixture_dir}/xz" -format UDZO -ov "${fixture_dir}/xz.dmg"
-xz -zkf "${fixture_dir}/xz.dmg"
-./cart add "${fixture_dir}/xz.dmg.xz"
-[[ -e "/tmp/cart-test/Applications/XzDmg.app" ]] || exit 20
-./cart del XzDmg
-[[ ! -e "/tmp/cart-test/Applications/XzDmg.app" ]] || exit 21
+for format in dmg tar tar-gz tar-bz2 tar-xz zip xz pkg
+do
+    for layout in root direct nested
+    do
+        create_and_test_archives "${format}" "${layout}"
+    done
+done
 
-# Invalid XZ disk image must fail without leaving a decompressed image
-printf 'not a disk image' > "${fixture_dir}/invalid.dmg"
-xz -zkf "${fixture_dir}/invalid.dmg"
-if ./cart add "${fixture_dir}/invalid.dmg.xz"
+# Archives without an app fail and do not leave temporary extraction state.
+mkdir -p "${fixture_dir}/no-app/out"
+printf 'no app\n' > "${fixture_dir}/no-app/out/README.txt"
+/usr/bin/tar -cJf "${fixture_dir}/no-app.tar.xz" -C "${fixture_dir}/no-app" .
+if ./cart add "${fixture_dir}/no-app.tar.xz"
+then
+    exit 20
+fi
+[[ ! -e "${work_dir}/mountpoints/no-app.tar.xz" ]] || exit 21
+
+# Archive traversal entries are rejected before extraction.
+/usr/bin/tar -cJf "${fixture_dir}/traversal.tar.xz" -s ',^,../,' -C "${fixture_dir}/no-app" .
+if ./cart add "${fixture_dir}/traversal.tar.xz" > "${fixture_dir}/traversal.out" 2>&1
 then
     exit 22
 fi
-[[ ! -e "/tmp/cart-test/downloads/invalid.dmg" ]] || exit 23
+grep -Fq "Unsafe archive member" "${fixture_dir}/traversal.out"
+[[ ! -e "${work_dir}/mountpoints/traversal.tar.xz" ]] || exit 23
+
+# Invalid XZ disk images must fail without leaving decompressed or downloaded files.
+printf 'not a disk image' > "${fixture_dir}/invalid.dmg"
+xz -zkf "${fixture_dir}/invalid.dmg"
 if ./cart add "file://${fixture_dir}/invalid.dmg.xz"
 then
     exit 24
 fi
-[[ ! -e "/tmp/cart-test/downloads/invalid.dmg.xz" ]] || exit 25
+[[ ! -e "${work_dir}/downloads/invalid.dmg" ]]
+[[ ! -e "${work_dir}/downloads/invalid.dmg.xz" ]]
 
-# Archive without an application must fail and remove its extraction directory
-mkdir -p "${fixture_dir}/no-app/contained"
-touch "${fixture_dir}/no-app/contained/README.txt"
-/usr/bin/tar -cJf "${fixture_dir}/no-app.tar.xz" -C "${fixture_dir}/no-app" .
-if ./cart add "${fixture_dir}/no-app.tar.xz"
-then
-    exit 23
-fi
-[[ ! -e "/tmp/cart-test/mountpoints/no-app.tar.xz" ]] || exit 24
-
-# Archive traversal entries must be rejected before extraction
-/usr/bin/tar -cJf "${fixture_dir}/traversal.tar.xz" -s ',^,../,' -C "${fixture_dir}/no-app" .
-if ./cart add "${fixture_dir}/traversal.tar.xz" > "${fixture_dir}/traversal.out" 2>&1
-then
-    exit 25
-fi
-grep -Fq "Unsafe archive member" "${fixture_dir}/traversal.out" || exit 26
-[[ ! -e "/tmp/cart-test/mountpoints/traversal.tar.xz" ]] || exit 27
-
-# Nested zip archive test
-mkdir -p "${fixture_dir}/zip/contained/Nested Zip.app/Contents"
-touch "${fixture_dir}/zip/contained/Nested Zip.app/Contents/Info.plist"
-(
-    cd "${fixture_dir}/zip" || exit
-    /usr/bin/zip -qr "${fixture_dir}/nested.zip" .
-)
-./cart add "${fixture_dir}/nested.zip"
-[[ -e "/tmp/cart-test/Applications/Nested Zip.app" ]] || exit 20
-./cart del "Nested Zip"
-[[ ! -e "/tmp/cart-test/Applications/Nested Zip.app" ]] || exit 21
-
-# Test if jq installation works, if overridding CART_CONFIG works
-printf jq_force_install="true" >> /tmp/cart.config
-./cart add https://iterm2.com/downloads/stable/iTerm2-3_5_5.zip
-# Test if jq binary was installed
-[[ -e /tmp/cart-test/bin/jq ]] || exit 22
-./cart del iTerm
-rm -rf /tmp/cart-test /tmp/cart.config
+rm -rf "${work_dir}" /tmp/cart.config

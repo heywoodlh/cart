@@ -3,7 +3,7 @@
 set -e
 
 # VERSION awareness
-version="0.1.4"
+version="0.1.5"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -218,6 +218,25 @@ install_tar() {
     return "${install_status}"
 }
 
+install_pkg() {
+    archive_name="$(basename "${filename}")"
+    package_dir="${mountpoints}/${archive_name}"
+    rm -rf "${package_dir}" || true
+    mkdir -p "${mountpoints}"
+    if (ulimit -f 8388608; pkgutil --expand-full "${filename}" "${package_dir}") \
+        && install_app "${package_dir}"
+    then
+        install_status=0
+    else
+        install_status=$?
+    fi
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${package_dir}."
+    rm -rf "${package_dir}" || true
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${downloads}/${archive_name}."
+    [[ -e "${downloads}/${archive_name}" ]] && rm -rf "${downloads}/${archive_name}" || true
+    return "${install_status}"
+}
+
 install_xz_disk_image() {
     archive_name="$(basename "${filename}")"
     disk_image="${downloads}/${archive_name%.xz}"
@@ -309,6 +328,9 @@ check_file() {
     if unzip -tqq "${file}" &> /dev/null
     then
         file_type="zip"
+    elif xar -tf "${file}" 2> /dev/null | grep -Fxq "PackageInfo"
+    then
+        file_type="pkg"
     elif tar -tf "${file}" &> /dev/null
     then
         file_type="tar"
@@ -377,6 +399,7 @@ add() {
     check_file "${filename}"
     [[ "${file_type}" == "dmg" ]] && install_dmg
     [[ "${file_type}" == "zip" ]] && install_zip
+    [[ "${file_type}" == "pkg" ]] && install_pkg
     [[ "${file_type}" == "tar" ]] && install_tar
     [[ "${file_type}" == "xz" ]] && install_xz_disk_image
     [[ -n "${app_name}" ]] && register_app "${app_name}"
