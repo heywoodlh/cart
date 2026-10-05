@@ -21,9 +21,10 @@ For documentation on installation, configuration and usage of `cart` please refe
   - [x] app url hash
   - [x] repo files should match the same format
 - [ ] Symlink executables to ~/bin
-- [ ] Support other formats
+- [x] Support archive formats handled by built-in macOS tools
   - [x] Zip files
-  - [ ] Pkg files
+  - [x] Tar archives (including `.tar.xz`)
+  - [x] Pkg files
   - [ ] Executables?
 - [x] Configuration file `$HOME/Library/Application Support/cart/cart.config`
 - [ ] Repository list support (i.e. remote webserver/file with lists of apps)

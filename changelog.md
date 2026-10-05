@@ -1,5 +1,17 @@
 ---
 
+## 0.1.5
+
+- Add user-safe `.pkg` support by expanding package payloads without running package scripts.
+- Replace network downloads in the macOS integration suite with generated archive fixtures covering supported formats and app locations.
+- Remove the unused `nix-darwin` flake input and refresh flake inputs.
+
+## 0.1.4
+
+- Install tar archives, including `.tar.xz`, and ZIP archives by content.
+- Restore support for XZ-compressed disk images when an `xz` executable is available.
+- Discover nested `.app` bundles dynamically and reject unsafe archive paths.
+
 ## 0.1.3
 
 - Added `darwinModule` output and documentation
