@@ -1,0 +1,35 @@
+name: Validate release changelog
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release-changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify release is documented
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(sed -nE 's/^RELEASE="([^"]+)"$/\1/p' cart)"
+          if [ -z "$release" ] || [ "$(printf '%s\n' "$release" | wc -l)" -ne 1 ]; then
+            echo 'cart must define exactly one RELEASE="..." variable.' >&2
+            exit 1
+          fi
+
+          if ! git check-ref-format --allow-onelevel "refs/tags/$release"; then
+            echo "RELEASE $release is not a valid tag name." >&2
+            exit 1
+          fi
+
+          if ! grep -Fxq -- "## $release" changelog.md; then
+            echo "changelog.md does not contain a ## $release heading." >&2
+            exit 1
+          fi

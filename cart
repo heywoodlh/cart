@@ -3,7 +3,8 @@
 set -e
 
 # VERSION awareness
-version="0.1.3"
+RELEASE="0.1.3"
+version="${RELEASE}"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling

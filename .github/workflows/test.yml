@@ -1,0 +1,25 @@
+name: Test cart
+
+on:
+  pull_request:
+    paths:
+      - cart
+      - cart.config
+      - flake.nix
+      - flake.lock
+      - test.sh
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Run cart integration tests
+        run: ./test.sh
