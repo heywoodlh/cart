@@ -1,8 +1,9 @@
-name: Sync main to Tangled
+name: Sync main and tags to Tangled
 
 on:
   push:
     branches: [main]
+    tags: ["**"]
 
 permissions:
   contents: read
@@ -13,6 +14,7 @@ concurrency:
 
 jobs:
   sync:
+    if: github.event.deleted == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -33,8 +35,14 @@ jobs:
           EOF
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Push main to Tangled
+      - name: Push main or tag to Tangled
         run: |
           git remote add tangled git@tangled.org:heywoodlh.io/cart
-          git fetch tangled main
-          git push tangled HEAD:refs/heads/main
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            git fetch origin "$GITHUB_REF:$GITHUB_REF"
+            git show-ref --verify --quiet "$GITHUB_REF"
+            git push tangled "$GITHUB_REF:$GITHUB_REF"
+          else
+            git fetch tangled main
+            git push tangled HEAD:refs/heads/main
+          fi

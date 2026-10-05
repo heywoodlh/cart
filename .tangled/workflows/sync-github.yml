@@ -1,6 +1,8 @@
 when:
   - event: ["push"]
     branch: ["main"]
+  - event: ["push"]
+    tag: ["**"]
 
 engine: "nixery"
 
@@ -13,8 +15,18 @@ steps:
     command: |
       git config --global credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
 
-  - name: Push main to GitHub
+  - name: Push main or tag to GitHub
     command: |
+      if ! git ls-remote --exit-code origin "$TANGLED_REF" >/dev/null 2>&1; then
+        exit 0
+      fi
       git remote add github https://github.com/heywoodlh/cart.git
-      git fetch github main
-      git push github HEAD:refs/heads/main
+      if [ "$TANGLED_REF_TYPE" = "tag" ]; then
+        if ! git show-ref --verify --quiet "$TANGLED_REF"; then
+          exit 0
+        fi
+        git push github "$TANGLED_REF:$TANGLED_REF"
+      else
+        git fetch github main
+        git push github HEAD:refs/heads/main
+      fi

@@ -35,17 +35,18 @@ For documentation on installation, configuration and usage of `cart` please refe
   - [ ] repository verification (detect MITM -- i.e. something like GPG key verification?)
 - [x] Nix-Darwin module
 
-## Main branch mirroring
+## Main branch and release-tag mirroring
 
-`main` is mirrored bidirectionally between GitHub and Tangled:
+`main` and all tag refs are mirrored bidirectionally between GitHub and Tangled:
 
-- GitHub Actions pushes GitHub `main` to `git@tangled.org:heywoodlh.io/cart`.
+- GitHub Actions pushes GitHub `main` and tags to
+  `git@tangled.org:heywoodlh.io/cart`.
   Configure the repository Actions secret `TANGLED_SSH_PRIVATE_KEY` with a
   write-capable key registered on Tangled.
-- Tangled Spindle pushes Tangled `main` to GitHub. Configure its `GITHUB_TOKEN`
+- Tangled Spindle pushes Tangled `main` and tags to GitHub. Configure its `GITHUB_TOKEN`
   secret as a fine-grained GitHub token with **Contents: read and write** access
   to `heywoodlh/cart`.
 
-Both workflows only push `main` using normal, non-force Git pushes. If either
-forge has diverged history, the push must be reconciled manually before the
-mirror can resume.
+Both workflows use normal, non-force Git pushes. A moved tag or divergent
+`main` history is rejected and must be reconciled manually before mirroring can
+resume. Ref deletion is intentionally not mirrored.
