@@ -38,6 +38,47 @@ export CART_CONFIG=/tmp/cart.config
 # Fail if app does exist
 [[ ! -e "/tmp/cart-test/Applications/Podman Desktop.app" ]] || exit 21
 
+# Nested tar archive test
+fixture_dir="/tmp/cart-test/fixtures"
+mkdir -p "${fixture_dir}/tar/contained/NestedTar.app/Contents"
+touch "${fixture_dir}/tar/contained/NestedTar.app/Contents/Info.plist"
+/usr/bin/tar -cJf "${fixture_dir}/nested.tar.xz" -C "${fixture_dir}/tar" .
+./cart add "${fixture_dir}/nested.tar.xz"
+[[ -e "/tmp/cart-test/Applications/NestedTar.app" ]] || exit 20
+./cart del NestedTar
+[[ ! -e "/tmp/cart-test/Applications/NestedTar.app" ]] || exit 21
+
+# Archive without an application must fail and remove its extraction directory
+mkdir -p "${fixture_dir}/no-app/contained"
+touch "${fixture_dir}/no-app/contained/README.txt"
+/usr/bin/tar -cJf "${fixture_dir}/no-app.tar.xz" -C "${fixture_dir}/no-app" .
+if ./cart add "${fixture_dir}/no-app.tar.xz"
+then
+    exit 23
+fi
+[[ ! -e "/tmp/cart-test/mountpoints/no-app.tar.xz" ]] || exit 24
+
+# Archive traversal entries must be rejected before extraction
+/usr/bin/tar -cJf "${fixture_dir}/traversal.tar.xz" -s ',^,../,' -C "${fixture_dir}/no-app" .
+if ./cart add "${fixture_dir}/traversal.tar.xz" > "${fixture_dir}/traversal.out" 2>&1
+then
+    exit 25
+fi
+grep -Fq "Unsafe archive member" "${fixture_dir}/traversal.out" || exit 26
+[[ ! -e "/tmp/cart-test/mountpoints/traversal.tar.xz" ]] || exit 27
+
+# Nested zip archive test
+mkdir -p "${fixture_dir}/zip/contained/Nested Zip.app/Contents"
+touch "${fixture_dir}/zip/contained/Nested Zip.app/Contents/Info.plist"
+(
+    cd "${fixture_dir}/zip" || exit
+    /usr/bin/zip -qr "${fixture_dir}/nested.zip" .
+)
+./cart add "${fixture_dir}/nested.zip"
+[[ -e "/tmp/cart-test/Applications/Nested Zip.app" ]] || exit 20
+./cart del "Nested Zip"
+[[ ! -e "/tmp/cart-test/Applications/Nested Zip.app" ]] || exit 21
+
 # Test if jq installation works, if overridding CART_CONFIG works
 printf jq_force_install="true" >> /tmp/cart.config
 ./cart add https://iterm2.com/downloads/stable/iTerm2-3_5_5.zip

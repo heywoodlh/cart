@@ -133,11 +133,11 @@ app_name=""
 app_dest=""
 install_app() {
     app_path="$1"
-    # Install .app if found
-    if find "${app_path}" -maxdepth 1 -name "*.app" &>/dev/null
+    # Install the first application bundle found anywhere in the extracted tree.
+    appfilepath="$(find "${app_path}" -type d -name "*.app" -prune -print -quit)"
+    if [[ -n "${appfilepath}" ]]
     then
-        appfilepath="$(find "${app_path}" -maxdepth 1 -name "*.app")"
-        appfile="$(basename ${appfilepath})"
+        appfile="$(basename "${appfilepath}")"
         [[ "${cart_debug}" == "true" ]] && echo "Copying: ${appfilepath} => ${apps_folder}/${appfile}"
         rsync -a --delete "${appfilepath}" "${apps_folder}"
         app_name="${appfile%.*}"
@@ -176,29 +176,104 @@ install_dmg() {
 }
 
 install_zip() {
-    basename="$(basename "${filename}")"
-    mkdir -p "${mountpoints}/${basename}"
-    unzip -o -d "${mountpoints}/${basename}" "${filename}"
-    install_app "${mountpoints}/${basename}"
+    archive_name="$(basename "${filename}")"
+    archive_dir="${mountpoints}/${archive_name}"
+    rm -rf "${archive_dir}" || true
+    mkdir -p "${archive_dir}"
+    if archive_members_are_safe "zip" \
+        && (ulimit -f 8388608; unzip -qo "${filename}" -d "${archive_dir}") \
+        && install_app "${archive_dir}"
+    then
+        install_status=0
+    else
+        install_status=$?
+    fi
     # Cleanup
-    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${mountpoints}/${basename}."
-    [[ -e "${mountpoints}/${basename}" ]] && rm -rf "${mountpoints}/${basename}" > /dev/null
-    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${downloads}/${basename}."
-    [[ -e "${downloads}/${basename}" ]] && rm -rf "${downloads}/${basename}" || true
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${archive_dir}."
+    rm -rf "${archive_dir}" || true
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${downloads}/${archive_name}."
+    [[ -e "${downloads}/${archive_name}" ]] && rm -rf "${downloads}/${archive_name}" || true
+    return "${install_status}"
 }
 
-# Function to determine file type
+install_tar() {
+    archive_name="$(basename "${filename}")"
+    archive_dir="${mountpoints}/${archive_name}"
+    rm -rf "${archive_dir}" || true
+    mkdir -p "${archive_dir}"
+    if archive_members_are_safe "tar" \
+        && (ulimit -f 8388608; tar -xf "${filename}" -C "${archive_dir}") \
+        && install_app "${archive_dir}"
+    then
+        install_status=0
+    else
+        install_status=$?
+    fi
+    # Cleanup
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${archive_dir}."
+    rm -rf "${archive_dir}" || true
+    [[ "${cart_debug}" == "true" ]] && echo "Cleaning up ${downloads}/${archive_name}."
+    [[ -e "${downloads}/${archive_name}" ]] && rm -rf "${downloads}/${archive_name}" || true
+    return "${install_status}"
+}
+
+archive_members_are_safe() {
+    archive_type="$1"
+    member=""
+    member_count=0
+    member_list="$(mktemp "${mountpoints}/.cart-members.XXXXXX")" || return 1
+
+    if [[ "${archive_type}" == "zip" ]]
+    then
+        if ! unzip -Z1 "${filename}" > "${member_list}"
+        then
+            rm -f "${member_list}" || true
+            echo "Unable to inspect archive members. Exiting." >&2
+            return 1
+        fi
+    elif ! tar -tf "${filename}" > "${member_list}"
+    then
+        rm -f "${member_list}" || true
+        echo "Unable to inspect archive members. Exiting." >&2
+        return 1
+    fi
+
+    while IFS= read -r member
+    do
+        member_count=$((member_count + 1))
+        if [[ "${member_count}" -gt 100000 ]]
+        then
+            rm -f "${member_list}" || true
+            echo "Archive has too many members. Exiting." >&2
+            return 1
+        fi
+
+        case "${member}" in
+            /* | ../* | */../* | ..)
+                rm -f "${member_list}" || true
+                echo "Unsafe archive member: ${member}" >&2
+                return 1
+            ;;
+        esac
+    done < "${member_list}"
+
+    rm -f "${member_list}" || true
+}
+
+# Determine whether the input is a native macOS archive or disk image.
 check_file() {
     file="$1"
-    file_data="$(file -I "${file}")"
-    echo -n "${file_data}" | grep -q 'application/x-bzip2' && file_type="dmg"
-    echo -n "${file_data}" | grep -q 'application/zlib' && file_type="dmg"
-    echo -n "${file_data}" | grep -q 'application/zip' && file_type="zip"
-    echo -n "${file_data}" | grep -q 'application/x-xz' && file_type="xz"
-
-    if [[ -z "${file_type}" ]]
+    if unzip -tqq "${file}" &> /dev/null
     then
-        printf "Unsupported filetype for "${file}".\n Exiting."
+        file_type="zip"
+    elif tar -tf "${file}" &> /dev/null
+    then
+        file_type="tar"
+    elif hdiutil verify "${file}" &> /dev/null
+    then
+        file_type="dmg"
+    else
+        printf "Unsupported archive or disk image for ${file}.\nExiting."
         exit 4
     fi
 }
@@ -256,7 +331,7 @@ add() {
     check_file "${filename}"
     [[ "${file_type}" == "dmg" ]] && install_dmg
     [[ "${file_type}" == "zip" ]] && install_zip
-    [[ "${file_type}" == "xz" ]] && install_dmg
+    [[ "${file_type}" == "tar" ]] && install_tar
     [[ -n "${app_name}" ]] && register_app "${app_name}"
 }
 
