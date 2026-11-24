@@ -76,6 +76,104 @@ curl -L https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg -o ~/Down
 shasum -a 256 ~/Downloads/UTM.dmg | awk '{print $1}'
 ```
 
+# Repositories
+
+A repository is a JSON document listing applications, so `cart` can install
+them by name instead of by URL:
+
+```json
+{
+  "name": "example",
+  "apps": [
+    {
+      "name": "UTM",
+      "url": "https://github.com/utmapp/UTM/releases/download/v4.5.4/UTM.dmg",
+      "hash": "1b3c2890afeaf12dfc95b39584680d6aa6c3000af21c9f5e0400161a9b8e40e1"
+    }
+  ]
+}
+```
+
+Every app entry must provide a `sha256` `hash`; `cart` installs from the hash
+recorded in the list, so a tampered download is rejected.
+
+The list can be hosted anywhere `curl` can read it: a plain web server, a
+`file://` URL, or a file in a git repository. For example, a list committed to
+GitHub can be added from its raw URL:
+
+```
+cart repo add https://raw.githubusercontent.com/heywoodlh/cart-repo/main/repo.json
+```
+
+## Managing repositories
+
+```
+cart repo add <url> [--name <name>] [--key <public-key>] [--hash <sha256>]
+cart repo add github:<owner>/<repo> [@<tag>] [--name <name>]
+cart repo del <name>
+cart repo update [<name>] [--key <public-key>] [--hash <sha256>]
+cart repo list
+```
+
+`cart repo add` downloads the list, verifies it, and keeps a verified copy in
+`$cart_dir/repos/<name>.json`. Configured repositories are recorded in
+`$cart_dir/repositories.json`. Re-adding a configured repository is refused;
+use `cart repo update`.
+
+## Installing from a repository
+
+Once a repository is configured, install by application name:
+
+```
+cart add UTM
+```
+
+If two repositories provide the same app name, qualify it:
+
+```
+cart add example/UTM
+```
+
+## Verifying repositories
+
+Repository content is verified on `add` and `update` so a changed list cannot be
+silently substituted:
+
+- **Pinned hash** — without a key, `cart repo add` records the list's sha256.
+  `cart repo update` then refuses content that no longer matches and prints the
+  new hash; re-run with `--hash <sha256>` to accept it. You can supply the
+  expected hash up front with `--hash`.
+- **Detached signature** — pass `--key <public-key.pem>` and `cart` verifies
+  `<url>.sig` with `openssl dgst -sha256 -verify` before using the list.
+  Signed lists update without prompts as long as the signature matches the
+  pinned key.
+
+Sign a list with the OpenSSL that ships on macOS:
+
+```
+openssl genrsa -out repo-key.pem 2048
+openssl rsa -in repo-key.pem -pubout -out repo-key.pub
+openssl dgst -sha256 -sign repo-key.pem -out repo.json.sig repo.json
+cart repo add https://example.com/repo.json --key ./repo-key.pub
+```
+
+Configured repositories are preserved by `cart clean` (only `cart clean --all`
+removes them).
+
+## GitHub releases
+
+`cart repo add github:<owner>/<repo>` builds a repository list from the latest
+release of a GitHub repository; append `@<tag>` to pin a specific release:
+
+```
+cart repo add github:utmapp/UTM
+cart repo add github:utmapp/UTM@v4.5.4 --name utm-pinned
+```
+
+Only assets with a supported archive extension (`.dmg`, `.zip`, `.pkg`, `.tar`,
+`.tar.gz`, `.tar.bz2`, `.tar.xz`, `.xz`) and a published `sha256` digest are
+included. `cart repo update` regenerates the list from the release API.
+
 # Uninstalling packages
 
 To uninstall an application, use `cart list` and `cart del`:

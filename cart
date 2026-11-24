@@ -3,7 +3,7 @@
 set -e
 
 # VERSION awareness
-version="0.1.5"
+version="0.2.0"
 
 # Hardcode PATH to ensure MacOS-provided executables are exclusively used
 # Reminder, BSD tools are quite different from GNU tooling
@@ -25,6 +25,8 @@ mountpoints="/tmp/cart/mountpoints"
 apps_folder="${HOME}/Applications"
 cart_dir="${HOME}/Library/Application Support/cart"
 jq_force_install="false"
+# Repository lists are fetched from this API for `cart repo add github:<owner>/<repo>`
+github_api="https://api.github.com"
 jq_version="1.8.1"
 jq_arm64_hash="a9fe3ea2f86dfc72f6728417521ec9067b343277152b114f4e98d8cb0e263603"
 jq_x86_64_hash="e80dbe0d2a2597e3c11c404f03337b981d74b4a8504b70586c354b7697a7c27f"
@@ -80,6 +82,12 @@ prep() {
 
     # Create directories
     mkdir -p "${mountpoints}" "${downloads}" "${apps_folder}"
+
+    # Repository registry lives alongside the installed application list.
+    # Derived here because cart_dir can be overridden by cart.config.
+    repositories_file="${cart_dir}/repositories.json"
+    repositories_dir="${cart_dir}/repos"
+    mkdir -p "${repositories_dir}"
 
     # For older MacOS versions, install jq
     export PATH="${cart_dir}/bin:${PATH}"
@@ -365,13 +373,17 @@ domain_regex='(https?|ftp|file)://[-[:alnum:]\+&@#/%?=~_|!:,.;]*[-[:alnum:]\+&@#
 add() {
     hash="$2"
     add_help() {
-        printf "Usage: cart add \"https://github.com/<some-repo>/releases/download/<some-release>/<some-app>.dmg\" \"sha256-hash\"\n" && exit 0
+        printf "Usage: cart add <url|local-file|app|repository/app> [sha256-hash]\n"
+        printf "Applications are resolved from repositories configured with 'cart repo add'.\n"
+        exit 0
     }
     case "$1" in
         "-h" | "--help")
             add_help
         ;;
     esac
+
+    [[ -n "$1" ]] || add_help
 
     prep
 
@@ -384,7 +396,14 @@ add() {
         then
             local_file="true"
         else
-            add_help
+            # Resolve an application name from configured repositories
+            if ! resolve_repo_app "${archive_url}"
+            then
+                exit 5
+            fi
+            archive_url="${resolved_url}"
+            [[ -z "${hash}" ]] && hash="${resolved_hash}"
+            [[ "${cart_debug}" == "true" ]] && echo "Archive URL: ${archive_url}"
         fi
     fi
 
@@ -493,18 +512,603 @@ clean() {
     then
        rm -rf "${cart_dir}"
     else
-       printf "Excluding the following files from deletion:\ncart.config\napplist.json\n"
-       find "${cart_dir}" | grep -vE "cart.config|applist.json" | xargs rm
+       printf "Excluding the following files from deletion:\ncart.config\napplist.json\nrepositories.json\nrepos/\n"
+       for entry in "${cart_dir}"/*(DN)
+       do
+           case "${entry##*/}" in
+               cart.config | applist.json | repositories.json | repos)
+                   continue
+               ;;
+           esac
+           rm -rf "${entry}"
+       done
     fi
 }
 
-#repo() {
-#    valid_repo_subcommands=("add" "del" "update" "clean")
-#    repo_add() {}
-#    repo_del() {}
-#    repo_update() {}
-#    repo_clean() {}
-#}
+# Repository lists
+#
+# A repository is a JSON document listing installable applications:
+#
+#   {
+#     "name": "example",
+#     "apps": [
+#       { "name": "UTM", "url": "https://.../UTM.dmg", "hash": "<sha256>" }
+#     ]
+#   }
+#
+# Configured repositories are recorded in ${cart_dir}/repositories.json and a
+# verified copy of each list is kept in ${cart_dir}/repos/<name>.json, so
+# `cart add <app>` works offline against the last verified copy.
+json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+repo_help() {
+    cat <<'EOF'
+Usage:
+  cart repo add <url> [--name <name>] [--key <public-key>] [--hash <sha256>]
+  cart repo add github:<owner>/<repo>[@<tag>] [--name <name>]
+  cart repo del <name>
+  cart repo update [<name>] [--key <public-key>] [--hash <sha256>]
+  cart repo list
+EOF
+}
+
+repo_stored() {
+    printf '%s/%s.json' "${repositories_dir}" "$1"
+}
+
+repo_registry() {
+    [[ -e "${repositories_file}" ]] || return 0
+    # `key` is the only optional field and stays last: shell `read` collapses
+    # runs of whitespace, so an empty field in the middle would shift values.
+    jq -r '.[] | [.name, .type, .url, .hash, .key] | @tsv' "${repositories_file}"
+}
+
+repo_registry_has() {
+    [[ -e "${repositories_file}" ]] || return 1
+    repo_registry | awk -F '\t' -v name="$1" '$1 == name { found = 1 } END { exit !found }'
+}
+
+repo_registry_add() {
+    local name="$1" type="$2" url="$3" key="$4" hash="$5"
+    local entry
+    entry="{\"name\":\"$(json_escape "${name}")\",\"type\":\"$(json_escape "${type}")\",\"url\":\"$(json_escape "${url}")\",\"key\":\"$(json_escape "${key}")\",\"hash\":\"$(json_escape "${hash}")\"}"
+    jq ". += [ ${entry} ]" "${repositories_file}" > "${repositories_file}.tmp"
+    mv "${repositories_file}.tmp" "${repositories_file}"
+}
+
+repo_registry_remove() {
+    local name="$1"
+    jq "del(.[] | select(.name == \"${name}\"))" "${repositories_file}" > "${repositories_file}.tmp"
+    mv "${repositories_file}.tmp" "${repositories_file}"
+}
+
+repo_validate_name() {
+    if [[ ! "$1" =~ ^[A-Za-z0-9._-]+$ ]]
+    then
+        echo "Invalid repository name: $1" >&2
+        return 1
+    fi
+}
+
+repo_name_from_url() {
+    local base="${1##*/}"
+    base="${base%%\?*}"
+    base="${base%.json}"
+    printf '%s' "${base}"
+}
+
+repo_fetch() {
+    local url="$1" dest="$2"
+    if [[ "${url}" == file://* ]]
+    then
+        [[ -e "${url#file://}" ]] || return 1
+        cp "${url#file://}" "${dest}"
+    else
+        curl -fsSL "${url}" -o "${dest}"
+    fi
+}
+
+repo_sha256() {
+    shasum -a 256 "$1" | awk '{print $1}'
+}
+
+repo_verify_signature() {
+    local key="$1" signature="$2" file="$3"
+    if [[ ! -e "${key}" ]]
+    then
+        echo "Signature key not found: ${key}" >&2
+        return 1
+    fi
+    if [[ ! -e "${signature}" ]]
+    then
+        echo "Signature file not found: ${signature}" >&2
+        return 1
+    fi
+    openssl dgst -sha256 -verify "${key}" -signature "${signature}" "${file}" &> /dev/null
+}
+
+repo_validate_file() {
+    local file="$1" name="" url="" hash=""
+    if ! jq -e '.apps' "${file}" &> /dev/null
+    then
+        echo "Repository ${file} has no apps list." >&2
+        return 1
+    fi
+    local found="false"
+    while IFS=$'\t' read -r name url hash
+    do
+        found="true"
+        if [[ -z "${name}" || -z "${url}" ]]
+        then
+            echo "Repository ${file} contains an app without a name or url." >&2
+            return 1
+        fi
+        if [[ ! "${hash}" =~ ^[0-9a-fA-F]{64}$ ]]
+        then
+            echo "Repository ${file} app ${name} must provide a sha256 hash." >&2
+            return 1
+        fi
+    done < <(jq -r '.apps[] | [.name, .url, .hash] | @tsv' "${file}")
+    if [[ "${found}" != "true" ]]
+    then
+        echo "Repository ${file} contains no apps." >&2
+        return 1
+    fi
+}
+
+# Build a repository list from a GitHub release. Assets without a published
+# sha256 digest are skipped: cart installs from the hash recorded in the list.
+repo_fetch_github() {
+    local spec="$1" name="$2" dest="$3" tmp_dir="$4"
+    local tag="" owner="" repo="" api_url="" release_json="" tag_name=""
+    local asset_name="" asset_url="" asset_digest="" asset_hash="" ext=""
+    local app_name="" apps_json="" app_count=0 line=""
+    local -A seen_apps
+    seen_apps=()
+
+    spec="${spec#github:}"
+    if [[ "${spec}" == *"@"* ]]
+    then
+        tag="${spec##*@}"
+        spec="${spec%@*}"
+    fi
+    owner="${spec%%/*}"
+    repo="${spec#*/}"
+    if [[ -z "${owner}" || -z "${repo}" || "${spec}" != */* ]]
+    then
+        echo "Invalid GitHub repository reference: github:${spec}" >&2
+        return 2
+    fi
+
+    if [[ -n "${tag}" ]]
+    then
+        api_url="${github_api}/repos/${owner}/${repo}/releases/tags/${tag}"
+    else
+        api_url="${github_api}/repos/${owner}/${repo}/releases/latest"
+    fi
+
+    release_json="${tmp_dir}/release.json"
+    if ! repo_fetch "${api_url}" "${release_json}"
+    then
+        echo "Unable to fetch release metadata from ${api_url}." >&2
+        return 1
+    fi
+
+    tag_name="$(jq -r '.tag_name' "${release_json}")"
+    [[ "${tag_name}" == "null" ]] && tag_name=""
+
+    while IFS=$'\t' read -r asset_name asset_url asset_digest
+    do
+        [[ -n "${asset_name}" ]] || continue
+        case "${asset_name}" in
+            *.tar.gz) ext=".tar.gz" ;;
+            *.tar.bz2) ext=".tar.bz2" ;;
+            *.tar.xz) ext=".tar.xz" ;;
+            *.dmg) ext=".dmg" ;;
+            *.zip) ext=".zip" ;;
+            *.pkg) ext=".pkg" ;;
+            *.tar) ext=".tar" ;;
+            *.xz) ext=".xz" ;;
+            *) continue ;;
+        esac
+        asset_hash="${asset_digest#sha256:}"
+        if [[ ! "${asset_hash}" =~ ^[0-9a-fA-F]{64}$ ]]
+        then
+            [[ "${cart_debug}" == "true" ]] && echo "Skipping ${asset_name}: release publishes no sha256 digest."
+            continue
+        fi
+        app_name="${asset_name%${ext}}"
+        # Releases often ship the same app in several formats; keep the first.
+        if (( ${+seen_apps[${app_name}]} ))
+        then
+            [[ "${cart_debug}" == "true" ]] && echo "Skipping ${asset_name}: ${app_name} is already listed."
+            continue
+        fi
+        seen_apps[${app_name}]=1
+        [[ -n "${apps_json}" ]] && apps_json+=","
+        apps_json+="{\"name\":\"$(json_escape "${app_name}")\",\"url\":\"$(json_escape "${asset_url}")\",\"hash\":\"${asset_hash}\"}"
+        app_count=$((app_count + 1))
+    done < <(jq -r '.assets[] | [.name, .browser_download_url, .digest] | @tsv' "${release_json}")
+
+    if [[ "${app_count}" == "0" ]]
+    then
+        echo "GitHub release ${owner}/${repo}${tag:+ at ${tag}} publishes no supported assets with sha256 digests." >&2
+        return 1
+    fi
+
+    local source_url="github:${owner}/${repo}"
+    [[ -n "${tag}" ]] && source_url+="@${tag}"
+    line="{\"name\":\"$(json_escape "${name}")\",\"url\":\"$(json_escape "${source_url}")\",\"tag\":\"$(json_escape "${tag_name}")\",\"apps\":[${apps_json}]}"
+    printf '%s\n' "${line}" > "${dest}"
+    [[ "${cart_debug}" == "true" ]] && echo "Generated repository ${name} from ${source_url} with ${app_count} app(s)."
+    return 0
+}
+
+repo_add() {
+    local url="" name="" key="" expected_hash=""
+    local tmp_dir="" staging="" actual_hash=""
+
+    while [[ $# -gt 0 ]]
+    do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --name=*) name="${1#--name=}"; shift ;;
+            --key) key="$2"; shift 2 ;;
+            --key=*) key="${1#--key=}"; shift ;;
+            --hash) expected_hash="$2"; shift 2 ;;
+            --hash=*) expected_hash="${1#--hash=}"; shift ;;
+            -h | --help) repo_help; exit 0 ;;
+            -*) echo "Unknown option for repo add: $1" >&2; exit 2 ;;
+            *) url="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "${url}" ]]
+    then
+        repo_help
+        exit 2
+    fi
+
+    prep
+    [[ -e "${repositories_file}" ]] || echo '[]' > "${repositories_file}"
+    tmp_dir="$(mktemp -d "${mountpoints}/.cart-repo.XXXXXX")"
+    staging="${tmp_dir}/repo.json"
+
+    if [[ "${url}" == github:* ]]
+    then
+        if [[ -z "${name}" ]]
+        then
+            name="${url#github:}"
+            name="${name##*/}"
+            name="${name%%@*}"
+        fi
+        repo_validate_name "${name}" || { rm -rf "${tmp_dir}"; exit 2; }
+        if repo_registry_has "${name}"
+        then
+            echo "Repository ${name} is already configured. Use 'cart repo update' to refresh it." >&2
+            rm -rf "${tmp_dir}"
+            exit 1
+        fi
+        if ! repo_fetch_github "${url}" "${name}" "${staging}" "${tmp_dir}"
+        then
+            rm -rf "${tmp_dir}"
+            exit 1
+        fi
+        repo_validate_file "${staging}" || { rm -rf "${tmp_dir}"; exit 1; }
+        cp "${staging}" "$(repo_stored "${name}")"
+        repo_registry_add "${name}" "github" "${url}" "" "$(repo_sha256 "$(repo_stored "${name}")")"
+        echo "Added repository ${name}"
+        rm -rf "${tmp_dir}"
+        exit 0
+    fi
+
+    if ! repo_fetch "${url}" "${staging}"
+    then
+        echo "Unable to download repository ${url}." >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+    fi
+
+    actual_hash="$(repo_sha256 "${staging}")"
+    if [[ -n "${key}" ]]
+    then
+        if ! repo_fetch "${url}.sig" "${tmp_dir}/repo.json.sig"
+        then
+            echo "Unable to download signature ${url}.sig." >&2
+            rm -rf "${tmp_dir}"
+            exit 1
+        fi
+        if ! repo_verify_signature "${key}" "${tmp_dir}/repo.json.sig" "${staging}"
+        then
+            echo "Signature verification failed for ${url}. Refusing to add repository (possible MITM)." >&2
+            rm -rf "${tmp_dir}"
+            exit 1
+        fi
+    elif [[ -n "${expected_hash}" && "${expected_hash}" != "${actual_hash}" ]]
+    then
+        echo "Repository hash mismatch for ${url}." >&2
+        echo "Expected: ${expected_hash}" >&2
+        echo "Actual:   ${actual_hash}" >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+    fi
+
+    repo_validate_file "${staging}" || { rm -rf "${tmp_dir}"; exit 1; }
+
+    if [[ -z "${name}" ]]
+    then
+        name="$(jq -r '.name' "${staging}")"
+        if [[ -z "${name}" || "${name}" == "null" ]]
+        then
+            name="$(repo_name_from_url "${url}")"
+        fi
+    fi
+    repo_validate_name "${name}" || { rm -rf "${tmp_dir}"; exit 2; }
+
+    if repo_registry_has "${name}"
+    then
+        echo "Repository ${name} is already configured. Use 'cart repo update' to refresh it." >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+    fi
+
+    cp "${staging}" "$(repo_stored "${name}")"
+    repo_registry_add "${name}" "remote" "${url}" "${key}" "${actual_hash}"
+    echo "Added repository ${name}"
+    if [[ -z "${key}" ]]
+    then
+        printf 'Repository content hash: %s\n' "${actual_hash}"
+        printf 'Pin this hash (--hash) or a signing key (--key) to detect tampering on update.\n'
+    fi
+    rm -rf "${tmp_dir}"
+}
+
+repo_del() {
+    local name="$1"
+
+    if [[ -z "${name}" ]]
+    then
+        repo_help
+        exit 2
+    fi
+
+    prep
+    if ! repo_registry_has "${name}"
+    then
+        echo "No repository named ${name} configured." >&2
+        exit 1
+    fi
+
+    rm -f "$(repo_stored "${name}")"
+    repo_registry_remove "${name}"
+    echo "Removed repository ${name}"
+}
+
+repo_update_one() {
+    local name="$1" type="$2" url="$3" hash="$4" key="$5"
+    local expected_hash="$6" new_key="$7"
+    local tmp_dir="" staging="" actual_hash=""
+
+    [[ -n "${new_key}" ]] && key="${new_key}"
+
+    tmp_dir="$(mktemp -d "${mountpoints}/.cart-repo.XXXXXX")"
+    staging="${tmp_dir}/repo.json"
+
+    if [[ "${type}" == "github" ]]
+    then
+        if ! repo_fetch_github "${url}" "${name}" "${staging}" "${tmp_dir}"
+        then
+            rm -rf "${tmp_dir}"
+            return 1
+        fi
+    else
+        if ! repo_fetch "${url}" "${staging}"
+        then
+            echo "Unable to download repository ${name} from ${url}." >&2
+            rm -rf "${tmp_dir}"
+            return 1
+        fi
+        actual_hash="$(repo_sha256 "${staging}")"
+        if [[ -n "${key}" ]]
+        then
+            if ! repo_fetch "${url}.sig" "${tmp_dir}/repo.json.sig"
+            then
+                echo "Unable to download signature ${url}.sig for ${name}." >&2
+                rm -rf "${tmp_dir}"
+                return 1
+            fi
+            if ! repo_verify_signature "${key}" "${tmp_dir}/repo.json.sig" "${staging}"
+            then
+                echo "Signature verification failed for ${name}. Refusing to update (possible MITM)." >&2
+                rm -rf "${tmp_dir}"
+                return 1
+            fi
+        else
+            if [[ -n "${expected_hash}" ]]
+            then
+                hash="${expected_hash}"
+            fi
+            if [[ "${hash}" != "${actual_hash}" ]]
+            then
+                if [[ -n "${expected_hash}" ]]
+                then
+                    echo "Repository hash mismatch for ${name}." >&2
+                    echo "Expected: ${expected_hash}" >&2
+                    echo "Actual:   ${actual_hash}" >&2
+                else
+                    echo "Repository ${name} content changed and no signing key is pinned. Refusing to update (possible MITM)." >&2
+                    echo "Re-run with --hash ${actual_hash} to accept the new content, or configure --key." >&2
+                fi
+                rm -rf "${tmp_dir}"
+                return 1
+            fi
+        fi
+    fi
+
+    if ! repo_validate_file "${staging}"
+    then
+        rm -rf "${tmp_dir}"
+        return 1
+    fi
+
+    mv "${staging}" "$(repo_stored "${name}")"
+    actual_hash="$(repo_sha256 "$(repo_stored "${name}")")"
+    repo_registry_remove "${name}"
+    repo_registry_add "${name}" "${type}" "${url}" "${key}" "${actual_hash}"
+    echo "Updated repository ${name}"
+    rm -rf "${tmp_dir}"
+}
+
+repo_update() {
+    local name_filter="" expected_hash="" new_key="" registry="" failed=0
+    local rname="" rtype="" rurl="" rhash="" rkey=""
+
+    while [[ $# -gt 0 ]]
+    do
+        case "$1" in
+            --key) new_key="$2"; shift 2 ;;
+            --key=*) new_key="${1#--key=}"; shift ;;
+            --hash) expected_hash="$2"; shift 2 ;;
+            --hash=*) expected_hash="${1#--hash=}"; shift ;;
+            -h | --help) repo_help; exit 0 ;;
+            -*) echo "Unknown option for repo update: $1" >&2; exit 2 ;;
+            *) name_filter="$1"; shift ;;
+        esac
+    done
+
+    prep
+    [[ -e "${repositories_file}" ]] || echo '[]' > "${repositories_file}"
+
+    if [[ -n "${name_filter}" ]] && ! repo_registry_has "${name_filter}"
+    then
+        echo "No repository named ${name_filter} configured." >&2
+        exit 1
+    fi
+
+    registry="$(repo_registry)"
+    if [[ -z "${registry}" ]]
+    then
+        echo "No repositories configured."
+        exit 0
+    fi
+
+    while IFS=$'\t' read -r rname rtype rurl rhash rkey
+    do
+        [[ -n "${rname}" ]] || continue
+        if [[ -n "${name_filter}" && "${rname}" != "${name_filter}" ]]
+        then
+            continue
+        fi
+        if ! repo_update_one "${rname}" "${rtype}" "${rurl}" "${rhash}" "${rkey}" "${expected_hash}" "${new_key}"
+        then
+            failed=1
+        fi
+    done <<< "${registry}"
+
+    exit "${failed}"
+}
+
+repo_list() {
+    prep
+    [[ -e "${repositories_file}" ]] || echo '[]' > "${repositories_file}"
+    printf 'Configured repositories:\n'
+    repo_registry | awk -F '\t' 'NF { printf "%s\t%s\t%s\n", $1, $2, $3 }'
+}
+
+# Resolve `cart add <app>` or `cart add <repo>/<app>` from configured repositories.
+resolve_repo_app() {
+    local query="$1"
+    local repo_filter="" app_query="" registry=""
+    local rname="" rtype="" rurl="" rhash="" rkey=""
+    local aname="" aurl="" ahash="" repo_file=""
+    local -a matches
+    matches=()
+    resolved_url=""
+    resolved_hash=""
+
+    repo_filter=""
+    app_query="${query}"
+    if [[ "${query}" == */* ]]
+    then
+        repo_filter="${query%%/*}"
+        app_query="${query#*/}"
+    fi
+
+    registry="$(repo_registry)"
+    if [[ -n "${repo_filter}" ]] && ! repo_registry_has "${repo_filter}"
+    then
+        echo "No repository named ${repo_filter} configured." >&2
+        return 1
+    fi
+
+    while IFS=$'\t' read -r rname rtype rurl rhash rkey
+    do
+        [[ -n "${rname}" ]] || continue
+        if [[ -n "${repo_filter}" && "${rname}" != "${repo_filter}" ]]
+        then
+            continue
+        fi
+        repo_file="$(repo_stored "${rname}")"
+        [[ -e "${repo_file}" ]] || continue
+        while IFS=$'\t' read -r aname aurl ahash
+        do
+            [[ "${aname}" == "${app_query}" ]] || continue
+            matches+=("${rname}/${aname}")
+            resolved_url="${aurl}"
+            resolved_hash="${ahash}"
+        done < <(jq -r '.apps[] | [.name, .url, .hash] | @tsv' "${repo_file}")
+    done <<< "${registry}"
+
+    if [[ "${#matches[@]}" == "0" ]]
+    then
+        echo "No application named ${query} found in configured repositories." >&2
+        return 1
+    fi
+
+    if [[ "${#matches[@]}" -gt "1" ]]
+    then
+        echo "Application ${app_query} is provided by multiple repositories:" >&2
+        printf '  %s\n' "${matches[@]}" >&2
+        echo "Use 'cart add <repository>/<app>' to choose one." >&2
+        return 1
+    fi
+
+    if [[ "${cart_debug}" == "true" ]]
+    then
+        echo "Resolved ${matches[1]} to ${resolved_url}"
+    fi
+}
+
+repo() {
+    local subcommand="$1"
+    shift
+
+    case "${subcommand}" in
+        add)
+            repo_add "$@"
+        ;;
+        del | remove)
+            repo_del "$@"
+        ;;
+        update)
+            repo_update "$@"
+        ;;
+        list)
+            repo_list "$@"
+        ;;
+        -h | --help | "")
+            repo_help
+        ;;
+        *)
+            echo "Unknown repo subcommand: ${subcommand}" >&2
+            repo_help
+            exit 2
+        ;;
+    esac
+}
+
 
 subcommand=$1
 case $subcommand in
@@ -524,7 +1128,11 @@ case $subcommand in
         shift
         clean $@
         ;;
+    "repo")
+        shift
+        repo "$@"
+        ;;
     *)
-        printf "Usage: cart [ add, del, list, clean ]\nVersion: ${version}"
+        printf "Usage: cart [ add, del, list, clean, repo ]\nVersion: ${version}"
         ;;
 esac
