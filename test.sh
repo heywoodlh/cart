@@ -92,6 +92,12 @@ create_and_test_archives() {
             archive="${fixture_dir}/${format}-${layout}.dmg"
             hdiutil create -quiet -fs HFS+ -srcfolder "${tree}" -format UDZO -ov "${archive}"
         ;;
+        dmg-lzfse)
+            # LZFSE images report as application/octet-stream to file(1), so magic
+            # matching missed them (issue #15).
+            archive="${fixture_dir}/${format}-${layout}.dmg"
+            hdiutil create -quiet -fs HFS+ -srcfolder "${tree}" -format ULFO -ov "${archive}"
+        ;;
         tar-gz)
             archive="${fixture_dir}/${format}-${layout}.tar.gz"
             /usr/bin/tar -czf "${archive}" -C "${tree}" .
@@ -143,7 +149,7 @@ EOF
     fi
 }
 
-for format in dmg tar tar-gz tar-bz2 tar-xz zip xz pkg
+for format in dmg dmg-lzfse tar tar-gz tar-bz2 tar-xz zip xz pkg
 do
     for layout in root direct nested
     do
