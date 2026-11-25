@@ -27,13 +27,14 @@ For documentation on installation, configuration and usage of `cart` please refe
   - [x] Pkg files
   - [ ] Executables?
 - [x] Configuration file `$HOME/Library/Application Support/cart/cart.config`
-- [ ] Repository list support (i.e. remote webserver/file with lists of apps)
-  - [ ] github release helper
-  - [ ] repo subcommand
-    - [ ] add
-    - [ ] del
-    - [ ] update
-  - [ ] repository verification (detect MITM -- i.e. something like GPG key verification?)
+- [x] Repository list support (i.e. remote webserver/file with lists of apps)
+  - [x] github release helper
+  - [x] repo subcommand
+    - [x] add
+    - [x] del
+    - [x] update
+  - [x] repository verification (detect MITM -- i.e. something like GPG key verification?)
+  - [x] allow for repository list to be on github/git
 - [x] Nix-Darwin module
 
 ## Main branch and release-tag mirroring

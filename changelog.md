@@ -1,5 +1,12 @@
 ---
 
+## 0.2.0
+
+- Add repository lists: `cart repo add`, `cart repo del`, `cart repo update` and `cart repo list`.
+- Install applications by name from a configured repository (`cart add <app>` or `cart add <repository>/<app>`).
+- Add a GitHub release helper: `cart repo add github:<owner>/<repo>[@<tag>]` builds a repository list from release assets that publish a sha256 digest.
+- Verify repository content on add and update with a pinned sha256 hash or an OpenSSL detached signature (`<url>.sig` verified with `--key <public-key>`), refusing changed lists that cannot be verified.
+
 ## 0.1.5
 
 - Add user-safe `.pkg` support by expanding package payloads without running package scripts.
